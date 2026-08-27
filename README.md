@@ -76,8 +76,7 @@ NoodleAI Web uses **Web Bluetooth**.
 
 Recommended:
 
-- Google Chrome or Chromium
-- Microsoft Edge
+- Google Chrome or Chromium or Microsoft Edge
 - Bluetooth-enabled computer
 
 The hosted GitHub Pages version already uses HTTPS, which is required for Web Bluetooth.
