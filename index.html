@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f6f8fb">
+  <meta name="description" content="NoodleAI Web: collect IMU gestures, train an MLP in the browser, and deploy NAI4 models to an ESP32-S3 over Web Bluetooth.">
+  <title>NoodleAI Web</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="app-header">
+      <div>
+        <div class="eyebrow">NoodleAI</div>
+        <h1>NoodleAI Web</h1>
+        <p>Collect. Train. Upload. Infer.</p>
+      </div>
+      <div class="header-badges">
+        <span id="tfBadge" class="badge">TensorFlow.js loading…</span>
+        <span id="bleBadge" class="badge badge-muted">Disconnected</span>
+      </div>
+    </header>
+
+    <section class="device-strip panel" aria-label="Device">
+      <button id="connectBtn" class="primary">Connect</button>
+      <div class="device-main">
+        <strong id="deviceStatus">Disconnected</strong>
+        <span id="supportNote">Checking Web Bluetooth…</span>
+      </div>
+      <div class="sensor-reading"><span>Accel</span><strong id="accelStatus">ax — &nbsp; ay — &nbsp; az —</strong></div>
+      <div class="sensor-reading"><span>Gyro</span><strong id="gyroStatus">gx — &nbsp; gy — &nbsp; gz —</strong></div>
+    </section>
+
+    <nav class="tabs" aria-label="NoodleAI workspace">
+      <button class="tab active" data-tab="live">Live IMU</button>
+      <button class="tab" data-tab="dataset">Dataset &amp; Train</button>
+      <button class="tab" data-tab="curves">Training Curves</button>
+      <button class="tab" data-tab="deploy">Deploy &amp; Infer</button>
+    </nav>
+
+    <main>
+      <section id="tab-live" class="tab-page active">
+        <div class="panel">
+          <div class="section-head">
+            <div><h2>Live QMI8658</h2><p>Raw six-axis IMU · last 5 seconds</p></div>
+            <button id="clearPlotBtn" class="secondary">Clear plot</button>
+          </div>
+          <div class="chart-stack">
+            <div class="chart-card"><div class="chart-title"><strong>Acceleration</strong><span>g</span></div><canvas id="accelCanvas" width="1100" height="260"></canvas></div>
+            <div class="chart-card"><div class="chart-title"><strong>Angular rate</strong><span>deg/s</span></div><canvas id="gyroCanvas" width="1100" height="260"></canvas></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="tab-dataset" class="tab-page">
+        <div class="panel">
+          <div class="section-title"><span class="step">1</span><div><h2>Dataset setup</h2><p>Define the normalized gesture length and all class labels before recording.</p></div></div>
+          <div class="form-grid setup-grid">
+            <label>Normalized gesture length<input id="normalizedLength" type="number" min="5" max="500" value="100"></label>
+            <div class="input-summary"><span>Stored raw stream</span><strong>6 IMU channels</strong></div>
+            <div class="input-summary"><span>Current input</span><strong id="inputDimSummary">100 × 3 = 300</strong></div>
+          </div>
+          <div class="label-editor">
+            <div class="label-add"><input id="labelEntry" placeholder="Class label, e.g. 1"><button id="addLabelBtn" class="secondary">Add label</button></div>
+            <select id="labelList" size="4" aria-label="Defined labels"></select>
+            <button id="removeLabelBtn" class="ghost">Remove selected</button>
+          </div>
+          <div class="action-row split-actions">
+            <div><button id="lockSetupBtn" class="primary">Lock setup</button><button id="resetDatasetBtn" class="secondary">Reset dataset</button></div>
+            <div><button id="loadDatasetBtn" class="secondary">Load .npz</button><button id="saveDatasetBtn" class="secondary" disabled>Save .npz</button><input id="datasetFile" type="file" accept=".npz" hidden></div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="section-title"><span class="step">2</span><div><h2>Record examples</h2><p>Choose a label, hold BOOT while drawing, then release BOOT.</p></div></div>
+          <div class="record-grid">
+            <label>Label<select id="recordLabel" disabled></select></label>
+            <div class="record-actions"><button id="armRecordBtn" class="primary" disabled>Use BOOT to record</button><button id="saveSampleBtn" class="secondary" disabled>Save sample</button><button id="discardSampleBtn" class="ghost" disabled>Discard</button></div>
+          </div>
+          <div id="recordProgress" class="status-box">Define labels and lock setup first.</div>
+          <div class="dataset-summary">
+            <div><span>Total samples</span><strong id="sampleCount">0</strong></div>
+            <div><span>Classes</span><strong id="classCount">0</strong></div>
+            <div><span>Raw NAI4 gestures</span><strong id="rawDatasetStatus">—</strong></div>
+          </div>
+          <div id="classCounts" class="class-counts"></div>
+        </div>
+
+        <div class="panel">
+          <div class="section-title"><span class="step">3</span><div><h2>Train N-layer MLP</h2><p>Training runs locally in this browser with TensorFlow.js.</p></div></div>
+          <div class="form-grid train-grid">
+            <label>Input representation<select id="representation"><option value="accel">Accelerometer</option><option value="gyro">Gyroscope</option><option value="accel+gyro">Accel + Gyro</option><option value="quaternion">Relative Quaternion</option><option value="velocity">Estimated Velocity</option><option value="velocity+quaternion">Velocity + Quaternion</option></select></label>
+            <label>Hidden layers<input id="hiddenLayers" value="32,16" placeholder="32,16"></label>
+            <label>Epochs<input id="epochs" type="number" min="10" max="5000" value="300"></label>
+          </div>
+          <div id="topology" class="topology">Topology: —</div>
+          <div class="action-row"><button id="trainBtn" class="primary" disabled>Train</button><span id="trainResult" class="inline-status"></span></div>
+        </div>
+      </section>
+
+      <section id="tab-curves" class="tab-page">
+        <div class="panel">
+          <div class="section-head"><div><h2>Training curves</h2><p id="curveSummary">Train a model to see loss and accuracy history.</p></div></div>
+          <div class="chart-stack">
+            <div class="chart-card"><div class="chart-title"><strong>Loss</strong><span>train / validation</span></div><canvas id="lossCanvas" width="1100" height="280"></canvas></div>
+            <div class="chart-card"><div class="chart-title"><strong>Accuracy</strong><span>train / validation</span></div><canvas id="accuracyCanvas" width="1100" height="280"></canvas></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="tab-deploy" class="tab-page">
+        <div class="panel">
+          <div class="section-title"><span class="step">1</span><div><h2>FFat model deployment</h2><p>Upload the current binary NAI4 package without recompiling firmware.</p></div></div>
+          <div class="deploy-controls"><button id="deployBtn" class="primary" disabled>Deploy to device</button><button id="saveModelBtn" class="secondary" disabled>Save .nai package</button><label>BLE chunk<select id="chunkSize"><option value="160" selected>160 bytes</option><option value="128">128 bytes</option><option value="64">64 bytes</option><option value="20">20 bytes</option></select></label></div>
+          <progress id="deployProgress" max="1" value="0"></progress><div id="deployText" class="status-box compact">No model deployed in this session.</div>
+        </div>
+
+        <div class="panel">
+          <div class="section-title"><span class="step">2</span><div><h2>Device mode</h2><p>Training streams raw IMU data; inference executes the deployed representation and Noodle MLP.</p></div></div>
+          <div class="mode-row"><button id="trainingModeBtn" class="secondary" disabled>TRAINING MODE</button><button id="inferenceModeBtn" class="secondary" disabled>INFERENCE MODE</button><strong id="modeStatus">Current mode: —</strong></div>
+        </div>
+
+        <div class="panel prediction-panel">
+          <div class="section-title"><span class="step">3</span><div><h2>Last prediction</h2></div></div>
+          <div id="predictionLabel" class="prediction-label">—</div><div id="predictionConfidence" class="prediction-confidence">Perform a gesture in Inference mode</div><div id="predictionMeta" class="muted">Hold BOOT → gesture → release BOOT</div>
+        </div>
+
+        <div class="panel"><div class="section-head"><div><h2>Status / diagnostics</h2></div><button id="clearLogBtn" class="ghost">Clear</button></div><pre id="log"></pre></div>
+      </section>
+    </main>
+
+    <footer>Runs locally in your browser. Raw gesture data does not need to leave your computer.</footer>
+  </div>
+  <script src="js/core.js"></script>
+  <script src="js/ble.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
