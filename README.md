@@ -1,5 +1,11 @@
 # NoodleAI Web
 
+<p align="center">
+  <img src="docs/devices.png" width="400"><br>
+  <em>EP32-S3 Matrix inside a case (https://www.thingiverse.com/thing:6949072).</em>
+</p>
+
+
 **Collect. Train. Upload. Infer.**
 
 NoodleAI Web is a friendly, browser-based TinyML playground for the **Waveshare ESP32-S3-Matrix**.
