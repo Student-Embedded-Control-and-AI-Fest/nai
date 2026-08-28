@@ -2,7 +2,8 @@
 
 <p align="center">
   <img src="docs/devices.png" width="400"><br>
-  <em>EP32-S3 Matrix inside a case (https://www.thingiverse.com/thing:6949072).</em>
+  <em>EP32-S3 Matrix inside a case (https://www.thingiverse.com/thing:6949072).</em><br>
+  <em>NoodleAI firmware uses Noodle framework (https://github.com/auralius/noodle).</em>
 </p>
 
 
