@@ -179,5 +179,6 @@ class NoodleAIBLE extends EventTarget {
   }
 }
 
+window.NoodleAIBLE=NoodleAIBLE;
 window.noodleBLE=new NoodleAIBLE();
 window.NAI_BLE=NAI_BLE;

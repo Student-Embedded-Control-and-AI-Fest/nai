@@ -3,139 +3,229 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#f6f8fb">
-  <meta name="description" content="NoodleAI Web: collect IMU gestures, train an MLP in the browser, and deploy NAI4 models to an ESP32-S3 over Web Bluetooth.">
-  <title>NoodleAI Web</title>
-  <link rel="stylesheet" href="style.css">
+  <meta name="theme-color" content="#09111f">
+  <meta name="description" content="NoodleAI Studio Mode 1 for ESP32-S3-Matrix: capture BOOT-delimited QMI8658 gestures, train locally, deploy NAI4 models, and run Noodle inference on-device.">
+  <title>NoodleAI Studio · Mode 1</title>
+  <link rel="stylesheet" href="style.css?v=mode1-studio">
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 </head>
 <body>
+  <div class="ambient ambient-a"></div>
+  <div class="ambient ambient-b"></div>
+
   <div class="app-shell">
     <header class="app-header">
-      <div>
-        <div class="eyebrow">NoodleAI</div>
-        <h1>NoodleAI Web</h1>
-        <p>Collect. Train. Upload. Infer.</p>
+      <div class="brand-lockup">
+        <div class="brand-mark" aria-hidden="true"><span>N</span></div>
+        <div>
+          <div class="eyebrow">Embedded ML Studio · Mode 1</div>
+          <h1>Noodle<span>AI</span></h1>
+          <p>Press BOOT. Draw the gesture. Release. Learn.</p>
+        </div>
       </div>
-      <div class="header-badges">
-        <span id="tfBadge" class="badge">TensorFlow.js loading…</span>
-        <span id="bleBadge" class="badge badge-muted">Disconnected</span>
+
+      <div class="header-side">
+        <div class="hardware-line">
+          <span>ESP32-S3-Matrix</span><i></i><span>QMI8658</span><i></i><span>BOOT-gated</span><i></i><span>NAI4</span>
+        </div>
+        <div class="header-badges">
+          <span id="tfBadge" class="badge">TensorFlow.js loading…</span>
+          <span id="bleBadge" class="badge badge-muted">Disconnected</span>
+        </div>
       </div>
     </header>
 
-    <section class="device-strip panel" aria-label="Device">
-      <button id="connectBtn" class="primary">Connect</button>
+    <section class="device-strip" aria-label="Device status">
+      <button id="connectBtn" class="primary connect-button">Connect</button>
       <div class="device-main">
+        <span class="micro-label">DEVICE</span>
         <strong id="deviceStatus">Disconnected</strong>
         <span id="supportNote">Checking Web Bluetooth…</span>
       </div>
-      <div class="sensor-reading"><span>Accel</span><strong id="accelStatus">ax — &nbsp; ay — &nbsp; az —</strong></div>
-      <div class="sensor-reading"><span>Gyro</span><strong id="gyroStatus">gx — &nbsp; gy — &nbsp; gz —</strong></div>
+      <div class="boot-reading">
+        <span class="boot-icon">B</span>
+        <div>
+          <span>BOOT GATE</span>
+          <strong id="bootStatus">Ready when connected</strong>
+        </div>
+      </div>
+      <div class="sensor-reading accel-reading">
+        <span class="sensor-icon">A</span>
+        <div><span>ACCELEROMETER · g</span><strong id="accelStatus">ax — &nbsp; ay — &nbsp; az —</strong></div>
+      </div>
+      <div class="sensor-reading gyro-reading">
+        <span class="sensor-icon">G</span>
+        <div><span>GYROSCOPE · deg/s</span><strong id="gyroStatus">gx — &nbsp; gy — &nbsp; gz —</strong></div>
+      </div>
     </section>
 
     <nav class="tabs" aria-label="NoodleAI workspace">
-      <button class="tab active" data-tab="live">Live IMU</button>
-      <button class="tab" data-tab="dataset">Dataset &amp; Train</button>
-      <button class="tab" data-tab="curves">Training Curves</button>
-      <button class="tab" data-tab="deploy">Deploy &amp; Infer</button>
+      <button class="tab active" data-tab="live"><span>01</span>Live IMU</button>
+      <button class="tab" data-tab="dataset"><span>02</span>Capture &amp; Train</button>
+      <button class="tab" data-tab="curves"><span>03</span>Training Curves</button>
+      <button class="tab" data-tab="deploy"><span>04</span>Deploy &amp; Infer</button>
     </nav>
 
     <main>
       <section id="tab-live" class="tab-page active">
-        <div class="panel">
+        <div class="panel hero-panel">
           <div class="section-head">
-            <div><h2>Live QMI8658</h2><p>Raw six-axis IMU · last 5 seconds</p></div>
-            <button id="clearPlotBtn" class="secondary">Clear plot</button>
+            <div>
+              <div class="section-kicker">LIVE TELEMETRY</div>
+              <h2>QMI8658 motion stream</h2>
+              <p>Raw six-axis motion from the ESP32-S3-Matrix · rolling 5-second view</p>
+            </div>
+            <div class="section-actions">
+              <span class="mode-chip"><i></i>MODE 1 · BOOT DELIMITED</span>
+              <button id="clearPlotBtn" class="ghost">Clear plot</button>
+            </div>
           </div>
-          <div class="chart-stack">
-            <div class="chart-card"><div class="chart-title"><strong>Acceleration</strong><span>g</span></div><canvas id="accelCanvas" width="1100" height="260"></canvas></div>
-            <div class="chart-card"><div class="chart-title"><strong>Angular rate</strong><span>deg/s</span></div><canvas id="gyroCanvas" width="1100" height="260"></canvas></div>
+
+          <div class="boot-flow" aria-label="Mode 1 gesture workflow">
+            <div><span>1</span><strong>HOLD BOOT</strong><small>opens the gesture gate</small></div>
+            <b>→</b>
+            <div><span>2</span><strong>MOVE</strong><small>perform one gesture naturally</small></div>
+            <b>→</b>
+            <div><span>3</span><strong>RELEASE</strong><small>closes and classifies the gesture</small></div>
+          </div>
+
+          <div class="chart-stack live-charts">
+            <div class="chart-card">
+              <div class="chart-title"><div><strong>Acceleration</strong><small>Linear motion + gravity</small></div><span>g</span></div>
+              <canvas id="accelCanvas" width="1100" height="260"></canvas>
+            </div>
+            <div class="chart-card">
+              <div class="chart-title"><div><strong>Angular rate</strong><small>Rotation from the onboard gyro</small></div><span>deg/s</span></div>
+              <canvas id="gyroCanvas" width="1100" height="260"></canvas>
+            </div>
           </div>
         </div>
       </section>
 
       <section id="tab-dataset" class="tab-page">
-        <div class="panel">
-          <div class="section-title"><span class="step">1</span><div><h2>Dataset setup</h2><p>Define the normalized gesture length and all class labels before recording.</p></div></div>
-          <div class="form-grid setup-grid">
-            <label>Normalized gesture length<input id="normalizedLength" type="number" min="5" max="500" value="100"></label>
-            <div class="input-summary"><span>Stored raw stream</span><strong>6 IMU channels</strong></div>
-            <div class="input-summary"><span>Current input</span><strong id="inputDimSummary">100 × 3 = 300</strong></div>
+        <div class="workspace-grid dataset-workspace">
+          <div class="panel">
+            <div class="section-title">
+              <span class="step">1</span>
+              <div><div class="section-kicker">DATASET</div><h2>Define gesture normalization</h2><p>Each BOOT-delimited gesture may last a different amount of time. Mode 1 resamples it to a fixed number of points before training.</p></div>
+            </div>
+
+            <div class="form-grid setup-grid">
+              <label>Normalized gesture length <span>points</span><input id="normalizedLength" type="number" min="5" max="500" value="100"></label>
+              <div class="input-summary"><span>RAW SENSOR</span><strong>6 channels · QMI8658</strong></div>
+              <div class="input-summary"><span>MODEL INPUT</span><strong id="inputDimSummary">100 × 3 = 300</strong></div>
+            </div>
+
+            <div class="label-editor">
+              <div class="label-add"><input id="labelEntry" placeholder="Class label, e.g. wave"><button id="addLabelBtn" class="secondary">Add class</button></div>
+              <select id="labelList" size="4" aria-label="Defined labels"></select>
+              <button id="removeLabelBtn" class="ghost">Remove selected</button>
+            </div>
+
+            <div class="action-row split-actions">
+              <div><button id="lockSetupBtn" class="primary">Lock setup</button><button id="resetDatasetBtn" class="ghost">Reset</button></div>
+              <div><button id="loadDatasetBtn" class="secondary">Load .npz</button><button id="saveDatasetBtn" class="secondary" disabled>Save .npz</button><input id="datasetFile" type="file" accept=".npz" hidden></div>
+            </div>
           </div>
-          <div class="label-editor">
-            <div class="label-add"><input id="labelEntry" placeholder="Class label, e.g. 1"><button id="addLabelBtn" class="secondary">Add label</button></div>
-            <select id="labelList" size="4" aria-label="Defined labels"></select>
-            <button id="removeLabelBtn" class="ghost">Remove selected</button>
-          </div>
-          <div class="action-row split-actions">
-            <div><button id="lockSetupBtn" class="primary">Lock setup</button><button id="resetDatasetBtn" class="secondary">Reset dataset</button></div>
-            <div><button id="loadDatasetBtn" class="secondary">Load .npz</button><button id="saveDatasetBtn" class="secondary" disabled>Save .npz</button><input id="datasetFile" type="file" accept=".npz" hidden></div>
+
+          <div class="panel capture-panel">
+            <div class="section-title">
+              <span class="step">2</span>
+              <div><div class="section-kicker">BOOT CAPTURE</div><h2>Record one gesture at a time</h2><p>Select a class, arm training mode, then use the physical BOOT button on the ESP32-S3-Matrix as the gesture boundary.</p></div>
+            </div>
+
+            <div class="capture-hero">
+              <div class="boot-key"><span>BOOT</span><small>hold while moving</small></div>
+              <div class="capture-copy"><strong>Physical button = gesture gate</strong><span>Press → record · Release → normalize</span></div>
+            </div>
+
+            <div class="record-grid">
+              <label>Active class<select id="recordLabel" disabled></select></label>
+              <div class="record-actions"><button id="armRecordBtn" class="record-button" disabled><span class="rec-dot"></span>Use BOOT to record</button><button id="saveSampleBtn" class="secondary" disabled>Save sample</button><button id="discardSampleBtn" class="ghost" disabled>Discard</button></div>
+            </div>
+
+            <div id="recordProgress" class="status-box">Define labels and lock setup first.</div>
+            <div class="dataset-summary">
+              <div><span>TOTAL SAMPLES</span><strong id="sampleCount">0</strong></div>
+              <div><span>CLASSES</span><strong id="classCount">0</strong></div>
+              <div><span>RAW NAI4</span><strong id="rawDatasetStatus">—</strong></div>
+            </div>
+            <div id="classCounts" class="class-counts"></div>
           </div>
         </div>
 
-        <div class="panel">
-          <div class="section-title"><span class="step">2</span><div><h2>Record examples</h2><p>Choose a label, hold BOOT while drawing, then release BOOT.</p></div></div>
-          <div class="record-grid">
-            <label>Label<select id="recordLabel" disabled></select></label>
-            <div class="record-actions"><button id="armRecordBtn" class="primary" disabled>Use BOOT to record</button><button id="saveSampleBtn" class="secondary" disabled>Save sample</button><button id="discardSampleBtn" class="ghost" disabled>Discard</button></div>
+        <div class="panel train-panel">
+          <div class="section-title">
+            <span class="step">3</span>
+            <div><div class="section-kicker">TRAIN</div><h2>Build the NoodleAI MLP</h2><p>Training runs locally in TensorFlow.js. The same raw gestures can be transformed into different NAI4 motion representations.</p></div>
           </div>
-          <div id="recordProgress" class="status-box">Define labels and lock setup first.</div>
-          <div class="dataset-summary">
-            <div><span>Total samples</span><strong id="sampleCount">0</strong></div>
-            <div><span>Classes</span><strong id="classCount">0</strong></div>
-            <div><span>Raw NAI4 gestures</span><strong id="rawDatasetStatus">—</strong></div>
-          </div>
-          <div id="classCounts" class="class-counts"></div>
-        </div>
 
-        <div class="panel">
-          <div class="section-title"><span class="step">3</span><div><h2>Train N-layer MLP</h2><p>Training runs locally in this browser with TensorFlow.js.</p></div></div>
           <div class="form-grid train-grid">
             <label>Input representation<select id="representation"><option value="accel">Accelerometer</option><option value="gyro">Gyroscope</option><option value="accel+gyro">Accel + Gyro</option><option value="quaternion">Relative Quaternion</option><option value="velocity">Estimated Velocity</option><option value="velocity+quaternion">Velocity + Quaternion</option></select></label>
             <label>Hidden layers<input id="hiddenLayers" value="32,16" placeholder="32,16"></label>
             <label>Epochs<input id="epochs" type="number" min="10" max="5000" value="300"></label>
           </div>
-          <div id="topology" class="topology">Topology: —</div>
-          <div class="action-row"><button id="trainBtn" class="primary" disabled>Train</button><span id="trainResult" class="inline-status"></span></div>
+          <div id="topology" class="topology"><span>NETWORK</span>Topology: —</div>
+          <div class="action-row train-action"><button id="trainBtn" class="primary" disabled>Train model</button><span id="trainResult" class="inline-status"></span></div>
+          <div class="status-box compact info-box">Mode 1 learns from complete BOOT-delimited gestures. Variable-duration recordings are normalized to the configured point count before the selected representation and scaler are applied.</div>
         </div>
       </section>
 
       <section id="tab-curves" class="tab-page">
         <div class="panel">
-          <div class="section-head"><div><h2>Training curves</h2><p id="curveSummary">Train a model to see loss and accuracy history.</p></div></div>
-          <div class="chart-stack">
-            <div class="chart-card"><div class="chart-title"><strong>Loss</strong><span>train / validation</span></div><canvas id="lossCanvas" width="1100" height="280"></canvas></div>
-            <div class="chart-card"><div class="chart-title"><strong>Accuracy</strong><span>train / validation</span></div><canvas id="accuracyCanvas" width="1100" height="280"></canvas></div>
+          <div class="section-head"><div><div class="section-kicker">MODEL DIAGNOSTICS</div><h2>Training &amp; validation</h2><p id="curveSummary">Train a model to see loss and accuracy history.</p></div></div>
+          <div class="chart-stack curves-grid">
+            <div class="chart-card"><div class="chart-title"><div><strong>Loss</strong><small>Optimization convergence</small></div><span>train / validation</span></div><canvas id="lossCanvas" width="1100" height="280"></canvas></div>
+            <div class="chart-card"><div class="chart-title"><div><strong>Accuracy</strong><small>Generalization performance</small></div><span>train / validation</span></div><canvas id="accuracyCanvas" width="1100" height="280"></canvas></div>
           </div>
         </div>
       </section>
 
       <section id="tab-deploy" class="tab-page">
-        <div class="panel">
-          <div class="section-title"><span class="step">1</span><div><h2>FFat model deployment</h2><p>Upload the current binary NAI4 package without recompiling firmware.</p></div></div>
-          <div class="deploy-controls"><button id="deployBtn" class="primary" disabled>Deploy to device</button><button id="saveModelBtn" class="secondary" disabled>Save .nai package</button><label>BLE chunk<select id="chunkSize"><option value="160" selected>160 bytes</option><option value="128">128 bytes</option><option value="64">64 bytes</option><option value="20">20 bytes</option></select></label></div>
-          <progress id="deployProgress" max="1" value="0"></progress><div id="deployText" class="status-box compact">No model deployed in this session.</div>
+        <div class="deploy-layout">
+          <div class="deploy-main">
+            <div class="panel">
+              <div class="section-title"><span class="step">1</span><div><div class="section-kicker">DEPLOYMENT</div><h2>Send the NAI4 model to ESP32-S3-Matrix</h2><p>Upload the trained model over Web Bluetooth. No firmware recompile is needed when only the model changes.</p></div></div>
+              <div class="deploy-controls"><button id="deployBtn" class="primary" disabled>Deploy to ESP32-S3</button><button id="saveModelBtn" class="secondary" disabled>Save .nai</button><label>BLE chunk<select id="chunkSize"><option value="160" selected>160 bytes</option><option value="128">128 bytes</option><option value="64">64 bytes</option><option value="20">20 bytes</option></select></label></div>
+              <div class="progress-wrap"><progress id="deployProgress" max="1" value="0"></progress></div>
+              <div id="deployText" class="status-box compact">No model deployed in this session.</div>
+            </div>
+
+            <div class="panel">
+              <div class="section-title"><span class="step">2</span><div><div class="section-kicker">RUNTIME</div><h2>Choose device mode</h2><p>Training streams IMU data and captures BOOT-delimited examples. Inference runs the deployed Noodle model after each BOOT release.</p></div></div>
+              <div class="mode-row"><button id="trainingModeBtn" class="mode-button" disabled>TRAINING MODE</button><button id="inferenceModeBtn" class="inference-button" disabled>INFERENCE MODE</button><strong id="modeStatus">Current mode: —</strong></div>
+            </div>
+          </div>
+
+          <div class="panel prediction-panel">
+            <div class="prediction-top"><span class="live-pill"><i></i>ON-DEVICE</span><span class="micro-label">LATEST GESTURE</span></div>
+            <div class="prediction-orbit">
+              <div class="prediction-ring">
+                <div id="predictionLabel" class="prediction-label">—</div>
+                <div id="predictionConfidence" class="prediction-confidence">Waiting for a gesture</div>
+              </div>
+            </div>
+            <div id="predictionMeta" class="prediction-meta">Hold BOOT → gesture → release BOOT</div>
+          </div>
         </div>
 
-        <div class="panel">
-          <div class="section-title"><span class="step">2</span><div><h2>Device mode</h2><p>Training streams raw IMU data; inference executes the deployed representation and Noodle MLP.</p></div></div>
-          <div class="mode-row"><button id="trainingModeBtn" class="secondary" disabled>TRAINING MODE</button><button id="inferenceModeBtn" class="secondary" disabled>INFERENCE MODE</button><strong id="modeStatus">Current mode: —</strong></div>
+        <div class="panel log-panel">
+          <div class="section-head"><div><div class="section-kicker">SERIALIZED STATUS</div><h2>Status / diagnostics</h2></div><button id="clearLogBtn" class="ghost">Clear</button></div>
+          <pre id="log"></pre>
         </div>
-
-        <div class="panel prediction-panel">
-          <div class="section-title"><span class="step">3</span><div><h2>Last prediction</h2></div></div>
-          <div id="predictionLabel" class="prediction-label">—</div><div id="predictionConfidence" class="prediction-confidence">Perform a gesture in Inference mode</div><div id="predictionMeta" class="muted">Hold BOOT → gesture → release BOOT</div>
-        </div>
-
-        <div class="panel"><div class="section-head"><div><h2>Status / diagnostics</h2></div><button id="clearLogBtn" class="ghost">Clear</button></div><pre id="log"></pre></div>
       </section>
     </main>
 
-    <footer>Runs locally in your browser. Raw gesture data does not need to leave your computer.</footer>
+    <footer>
+      <span>NoodleAI Mode 1</span>
+      <span>ESP32-S3-Matrix · BOOT-delimited · Noodle-executed</span>
+      <span>Raw gesture data stays local</span>
+    </footer>
   </div>
-  <script src="js/core.js"></script>
-  <script src="js/ble.js"></script>
-  <script src="js/app.js"></script>
+
+  <script src="js/core.js?v=mode1-studio"></script>
+  <script src="js/ble.js?v=mode1-studio"></script>
+  <script src="js/app.js?v=mode1-studio"></script>
 </body>
 </html>
