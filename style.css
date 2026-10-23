@@ -42,3 +42,34 @@ footer{display:flex;justify-content:space-between;gap:14px;color:#5e6d81;font-si
 @media(max-width:1050px){.dataset-workspace,.deploy-layout{grid-template-columns:1fr}.live-charts,.curves-grid{grid-template-columns:1fr}.prediction-panel{min-height:430px}.header-side{align-items:flex-start}.app-header{align-items:flex-start;flex-direction:column}.header-badges{justify-content:flex-start}.boot-flow{grid-template-columns:1fr}.boot-flow>b{display:none}.boot-flow>div{grid-template-columns:32px 1fr}}
 @media(max-width:800px){.app-shell{padding:20px 16px 34px}.device-strip{grid-template-columns:auto 1fr}.connect-button{grid-row:auto}.device-main,.boot-reading,.accel-reading,.gyro-reading{grid-column:auto;grid-row:auto}.sensor-reading,.boot-reading{grid-column:span 1}.setup-grid,.train-grid{grid-template-columns:1fr 1fr}.label-editor{grid-template-columns:1fr}.record-grid{grid-template-columns:1fr}.split-actions{align-items:stretch;flex-direction:column}.split-actions>div{flex-wrap:wrap}.hardware-line{flex-wrap:wrap}.panel{padding:18px}.brand-mark{width:49px;height:49px;border-radius:15px}.app-header h1{font-size:2.1rem}}
 @media(max-width:560px){.app-shell{padding:14px 10px 28px}.tabs{width:100%;border-radius:12px}.tab{padding:8px 10px}.setup-grid,.train-grid{grid-template-columns:1fr}.device-strip{grid-template-columns:1fr}.sensor-reading,.boot-reading{border-left:0;border-top:1px solid rgba(255,255,255,.07);padding:9px 5px}.dataset-summary{grid-template-columns:1fr}.mode-row strong{margin-left:0;width:100%}.deploy-controls{align-items:stretch;flex-direction:column}.deploy-controls label{margin-left:0;width:100%}.prediction-ring{width:190px;height:190px}.prediction-label{font-size:2.7rem}footer{flex-direction:column;gap:5px}.brand-lockup{align-items:flex-start}.header-side{width:100%}.section-head{flex-direction:column}.section-actions{justify-content:flex-start}.capture-hero{align-items:flex-start}.boot-key{width:66px}}
+
+.class-edit-hint{font-size:.75rem;color:#687488;line-height:1.5;margin:8px 1px 0}
+
+/* Final-epoch performance dashboard: designed for screenshots and paper tables. */
+.results-area[hidden]{display:none}
+.plot-numbers{display:flex;flex-wrap:wrap;gap:16px;margin:9px 4px 2px;font-size:.78rem;font-weight:720;color:#45566f;font-variant-numeric:tabular-nums}
+.results-area{margin-top:21px}
+.results-title h3,.results-table-card h3{margin:0;color:#263347;font-size:1rem}
+.results-title p,.table-caption{color:#788495;font-size:.78rem;margin:5px 0 12px}
+.metrics-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:9px;margin-top:12px}
+.metric-card{background:#f7f9fc;border:1px solid #e2e8f1;border-radius:13px;display:flex;flex-direction:column;gap:4px;padding:14px 12px;min-width:0}
+.metric-card.emphasized{background:#eef1ff;border-color:#d6ddff}
+.metric-card span{font-weight:750;font-size:.72rem;color:#647187}
+.metric-card strong{color:#18263e;font-size:1.48rem;font-variant-numeric:tabular-nums;letter-spacing:-.045em}
+.metric-card small{color:#8794a4;font-size:.67rem}
+.methodology{color:#687789;font-size:.74rem;line-height:1.5;margin:12px 1px}
+.paper-caution{border-top:1px solid #e8edf2;padding-top:12px;margin-bottom:0}
+.results-tables{display:grid;grid-template-columns:1fr 1fr;gap:13px;margin-top:15px}
+.results-table-card{border:1px solid #e2e8f1;border-radius:13px;background:#fff;padding:14px;min-width:0}
+.table-scroll{overflow-x:auto;max-width:100%}
+.report-table{border-collapse:collapse;width:100%;font-size:.76rem;font-variant-numeric:tabular-nums;white-space:nowrap}
+.report-table th,.report-table td{padding:8px 9px;border-bottom:1px solid #edf0f4;text-align:right;color:#445269}
+.report-table th{font-weight:820;color:#27374d;background:#f3f6fa}
+.report-table th:first-child,.report-table td:first-child{text-align:left}
+.report-table tbody tr:last-child td{border-bottom:0}
+.confusion-table td{text-align:center}
+.confusion-table td.confusion-hit{background:#e9f7f3;color:#14654c;font-weight:800}
+.confusion-table td.confusion-error{background:#fff1ed;color:#a9432e;font-weight:800}
+@media(max-width:1200px){.metrics-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:750px){.results-tables{grid-template-columns:1fr}}
+@media(max-width:560px){.metrics-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}

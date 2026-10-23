@@ -1,23 +1,25 @@
 
 'use strict';
 
-if (!window.noodleBLE || !window.NoodleAIBLE) {
-  throw new Error('NoodleAI BLE runtime did not load. Hard-refresh and verify js/ble.js is published.');
+if (!window.noodleBLE || !window.NoodleAIBLE || !window.NoodleMetrics) {
+  throw new Error('NoodleAI runtime did not load. Hard-refresh and verify js/ble.js and js/metrics.js are published.');
 }
 
 
 const $=id=>document.getElementById(id);
 const REP_LABEL={accel:'Accelerometer',gyro:'Gyroscope','accel+gyro':'Accel + Gyro',quaternion:'Relative Quaternion',velocity:'Estimated Velocity','velocity+quaternion':'Velocity + Quaternion'};
+const MAX_CLASSES=10; // Keep in sync with NoodleAIModel::MAX_CLASSES in the ESP32 firmware.
 const state={
-  labels:[],samples:[],rawSamples:[],targets:[],rawLengths:[],durationsMs:[],N:100,setupLocked:false,
+  labels:[],samples:[],rawSamples:[],targets:[],rawLengths:[],durationsMs:[],N:100,setupLocked:false,trainingInProgress:false,
   pendingRaw:null,pendingWindow:null,pendingLabelIndex:null,pendingDurationMs:0,pendingGestureEnd:null,recording:null,
-  model:null,scaler:null,pkg:null,history:null,trainedRep:null,deviceMode:'?',
+  model:null,scaler:null,pkg:null,history:null,report:null,trainedRep:null,deviceMode:'?',
   live:{t:[],accel:[[],[],[]],gyro:[[],[],[]]},
 };
 
 function log(msg){const t=new Date().toLocaleTimeString();$('log').textContent+=`[${t}] ${msg}\n`;$('log').scrollTop=$('log').scrollHeight;}
 function downloadBlob(blob,name){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);}
 function pct(v){return `${(100*v).toFixed(1)}%`;}
+function score(v){return Number(v).toFixed(3);}
 function setBootStatus(text,active=false){const el=$('bootStatus');if(el)el.textContent=text;const box=el?.closest('.boot-reading');if(box)box.classList.toggle('active',!!active);}
 function switchTab(name){document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active',b.dataset.tab===name));document.querySelectorAll('.tab-page').forEach(p=>p.classList.toggle('active',p.id===`tab-${name}`));}
 
@@ -41,9 +43,16 @@ function updateInputAndTopology(){
   try{$('topology').textContent=`Topology: ${[D,...parseHidden(),Math.max(state.labels.length,0)].join(' → ')}  [${REP_LABEL[rep]}]`;}catch(e){$('topology').textContent=`Topology: ${e.message}`;}
 }
 
-function refreshLabels(){
+function refreshLabels(preferredRecordIndex=null){
+  // Preserve the active capture class when editing labels, or select a newly added class.
+  const previousRecordIndex=$('recordLabel').selectedIndex;
   $('labelList').innerHTML='';$('recordLabel').innerHTML='';
   state.labels.forEach((label,i)=>{const a=document.createElement('option');a.value=String(i);a.textContent=label;$('labelList').appendChild(a);const b=a.cloneNode(true);$('recordLabel').appendChild(b);});
+  const recordIndex=preferredRecordIndex===null?previousRecordIndex:preferredRecordIndex;
+  if(recordIndex>=0&&recordIndex<state.labels.length){
+    $('recordLabel').selectedIndex=recordIndex;
+    if(preferredRecordIndex!==null)$('labelList').selectedIndex=recordIndex;
+  }
   $('classCount').textContent=String(state.labels.length);
   updateInputAndTopology();
 }
@@ -53,34 +62,87 @@ function refreshDataset(){
   $('rawDatasetStatus').textContent=n===0?'—':state.rawSamples.length===n?'available':'legacy only';
   const counts=Array(state.labels.length).fill(0);state.targets.forEach(y=>{if(y>=0&&y<counts.length)counts[y]++;});
   $('classCounts').innerHTML='';counts.forEach((c,i)=>{const s=document.createElement('span');s.className='class-pill';s.textContent=`${state.labels[i]}: ${c}`;$('classCounts').appendChild(s);});
-  $('trainBtn').disabled=!(state.setupLocked&&n>0);
+  $('trainBtn').disabled=!(state.setupLocked&&n>0)||state.trainingInProgress;
 }
 
-function invalidateModel(){if(state.model){try{state.model.dispose();}catch(_){}}state.model=null;state.scaler=null;state.pkg=null;state.history=null;state.trainedRep=null;$('saveModelBtn').disabled=true;$('deployBtn').disabled=true;$('trainResult').textContent='';$('curveSummary').textContent='Train a model to see loss and accuracy history.';drawTrainingCurves();}
+function invalidateModel(){if(state.model){try{state.model.dispose();}catch(_){}}state.model=null;state.scaler=null;state.pkg=null;state.history=null;state.report=null;state.trainedRep=null;$('saveModelBtn').disabled=true;$('deployBtn').disabled=true;$('trainResult').textContent='';$('curveSummary').textContent='Train a model to see loss, accuracy, and validation metrics.';renderMetrics();drawTrainingCurves();}
 
 function lockUi(locked){
-  state.setupLocked=locked;$('normalizedLength').disabled=locked;$('labelEntry').disabled=locked;$('addLabelBtn').disabled=locked;$('removeLabelBtn').disabled=locked;$('lockSetupBtn').disabled=locked;
-  $('recordLabel').disabled=!locked;$('armRecordBtn').disabled=!(locked&&window.noodleBLE.connected);$('trainBtn').disabled=!(locked&&state.targets.length);
+  state.setupLocked=locked;
+  // Gesture length is fixed once capture begins; class definitions are still editable.
+  // Never mutate training data/labels while an asynchronous model.fit is running.
+  const busy=state.trainingInProgress;
+  $('normalizedLength').disabled=locked||busy;
+  $('labelEntry').disabled=busy;
+  $('addLabelBtn').disabled=busy||state.labels.length>=MAX_CLASSES;
+  $('removeLabelBtn').disabled=busy;
+  $('lockSetupBtn').disabled=locked||busy;
+  $('resetDatasetBtn').disabled=busy;
+  $('loadDatasetBtn').disabled=busy;
+  $('recordLabel').disabled=!locked||busy;
+  $('armRecordBtn').disabled=!locked||busy||!window.noodleBLE.connected;
+  $('trainBtn').disabled=!locked||busy||!state.targets.length;
+  $('downloadReportBtn').disabled=busy||!state.report;
+}
+
+function classEditAllowed(){
+  if(state.trainingInProgress){alert('Wait for training to finish before editing classes.');return false;}
+  if(state.recording||state.pendingRaw||state.pendingWindow){alert('Save or discard the current gesture before editing classes.');return false;}
+  return true;
+}
+
+function notifyClassChange(action){
+  const hadModel=!!(state.model||state.pkg);
+  if(hadModel)invalidateModel();
+  refreshDataset();
+  lockUi(state.setupLocked);
+  if(hadModel){
+    $('trainResult').textContent='Classes changed — train again before deploying.';
+    log(`${action} Existing samples preserved; previous trained model invalidated. Retrain to update the output classes.`);
+  }else log(action);
 }
 
 function resetDataset(confirmFirst=true){
   if(confirmFirst&&(state.targets.length||state.setupLocked)&&!confirm('Clear all recorded samples and unlock the dataset setup?'))return;
-  state.labels=[];state.samples=[];state.rawSamples=[];state.targets=[];state.rawLengths=[];state.durationsMs=[];state.pendingRaw=null;state.pendingWindow=null;state.pendingLabelIndex=null;state.recording=null;state.pendingGestureEnd=null;state.N=Number($('normalizedLength').value)||100;
+  state.labels=[];state.samples=[];state.rawSamples=[];state.targets=[];state.rawLengths=[];state.durationsMs=[];state.pendingRaw=null;state.pendingWindow=null;state.pendingLabelIndex=null;state.pendingDurationMs=0;state.recording=null;state.pendingGestureEnd=null;state.N=Number($('normalizedLength').value)||100;
   invalidateModel();lockUi(false);refreshLabels();refreshDataset();$('recordProgress').textContent='Define labels and lock setup first.';$('saveSampleBtn').disabled=true;$('discardSampleBtn').disabled=true;
 }
 
-$('addLabelBtn').addEventListener('click',()=>{if(state.setupLocked)return;const label=$('labelEntry').value.trim();if(!label)return;if(state.labels.includes(label)){alert('That label already exists.');return;}state.labels.push(label);$('labelEntry').value='';refreshLabels();});
+$('addLabelBtn').addEventListener('click',()=>{
+  if(!classEditAllowed())return;
+  const label=$('labelEntry').value.trim();if(!label)return;
+  if(state.labels.includes(label)){alert('That label already exists.');return;}
+  if(state.labels.length>=MAX_CLASSES){alert(`The ESP32 firmware supports at most ${MAX_CLASSES} classes.`);return;}
+  if(new TextEncoder().encode(label).length>31){alert('Class labels must be at most 31 UTF-8 bytes for the ESP32 firmware.');return;}
+  state.labels.push(label);$('labelEntry').value='';
+  refreshLabels(state.labels.length-1);
+  notifyClassChange(`Added class “${label}” (${state.labels.length}/${MAX_CLASSES}).`);
+});
 $('labelEntry').addEventListener('keydown',e=>{if(e.key==='Enter'){$('addLabelBtn').click();e.preventDefault();}});
-$('removeLabelBtn').addEventListener('click',()=>{if(state.setupLocked)return;const i=$('labelList').selectedIndex;if(i>=0){state.labels.splice(i,1);refreshLabels();}});
+$('removeLabelBtn').addEventListener('click',()=>{
+  if(!classEditAllowed())return;
+  const i=$('labelList').selectedIndex;if(i<0)return;
+  const label=state.labels[i];
+  if(state.targets.includes(i)){
+    alert(`“${label}” has recorded samples. This version protects recorded classes from deletion; use Reset to start a new dataset.`);
+    return;
+  }
+  state.labels.splice(i,1);
+  // Removing an unused class can shift indices of other classes. Keep targets aligned.
+  state.targets=state.targets.map(y=>y>i?y-1:y);
+  const nextRecordIndex=Math.min(i,state.labels.length-1);
+  refreshLabels(nextRecordIndex);
+  notifyClassChange(`Removed empty class “${label}”.`);
+});
 $('normalizedLength').addEventListener('input',updateInputAndTopology);$('representation').addEventListener('change',updateInputAndTopology);$('hiddenLayers').addEventListener('input',updateInputAndTopology);
 
-$('lockSetupBtn').addEventListener('click',()=>{const N=Number($('normalizedLength').value);if(!Number.isInteger(N)||N<5||N>500){alert('Use 5..500 normalized gesture points.');return;}if(state.labels.length<2){alert('Define at least two labels first.');return;}state.N=N;lockUi(true);refreshDataset();$('recordProgress').textContent=`Ready. Select a label, click “Use BOOT to record”, then hold BOOT while drawing.`;log(`Dataset locked: ${N} normalized points; ${state.labels.length} labels.`);});
+$('lockSetupBtn').addEventListener('click',()=>{if(state.trainingInProgress)return;const N=Number($('normalizedLength').value);if(!Number.isInteger(N)||N<5||N>500){alert('Use 5..500 normalized gesture points.');return;}if(state.labels.length<2){alert('Define at least two labels first.');return;}state.N=N;lockUi(true);refreshDataset();$('recordProgress').textContent=`Ready. Select a label, click “Use BOOT to record”, then hold BOOT while drawing.`;log(`Dataset locked: ${N} normalized points; ${state.labels.length} labels.`);});
 $('resetDatasetBtn').addEventListener('click',()=>resetDataset(true));
 
 $('armRecordBtn').addEventListener('click',async()=>{try{if(!state.setupLocked)throw new Error('Lock the dataset setup first.');if(!window.noodleBLE.connected)throw new Error('Connect the device first.');if($('recordLabel').selectedIndex<0)throw new Error('Choose a label.');await window.noodleBLE.setTraining();$('recordProgress').textContent=`Ready for “${state.labels[$('recordLabel').selectedIndex]}”: hold BOOT, draw, release BOOT.`;}catch(e){alert(e.message);}});
 
 function beginGesture(){
-  if(state.deviceMode!=='T'||!state.setupLocked)return;
+  if(state.deviceMode!=='T'||!state.setupLocked||state.trainingInProgress)return;
   const idx=$('recordLabel').selectedIndex;if(idx<0||idx>=state.labels.length){log('Gesture started but no valid label is selected.');return;}
   state.pendingRaw=null;state.pendingWindow=null;state.pendingLabelIndex=idx;state.pendingDurationMs=0;state.pendingGestureEnd=null;state.recording=[];
   $('recordProgress').textContent=`Recording “${state.labels[idx]}” while BOOT is held…`;$('saveSampleBtn').disabled=true;$('discardSampleBtn').disabled=false;
@@ -97,28 +159,145 @@ function finishGestureIfReady(){
   $('recordProgress').textContent=`Captured ${count} raw samples (${(durationMs/1000).toFixed(2)} s) → normalized to ${state.N} points. Save or discard.`;$('saveSampleBtn').disabled=false;$('discardSampleBtn').disabled=false;
 }
 
-$('saveSampleBtn').addEventListener('click',()=>{if(!state.pendingRaw||!state.pendingWindow||state.pendingLabelIndex==null)return;state.samples.push(Float32Array.from(state.pendingWindow));state.rawSamples.push({data:Float32Array.from(state.pendingRaw.data),length:state.pendingRaw.length});state.targets.push(state.pendingLabelIndex);state.rawLengths.push(state.pendingRaw.length);state.durationsMs.push(state.pendingDurationMs||0);log(`Saved “${state.labels[state.pendingLabelIndex]}”: raw=${state.pendingRaw.length}, normalized=${state.N}×6.`);state.pendingRaw=null;state.pendingWindow=null;state.pendingLabelIndex=null;state.pendingDurationMs=0;$('saveSampleBtn').disabled=true;$('discardSampleBtn').disabled=true;$('recordProgress').textContent='Saved. Select a label and hold BOOT for another gesture.';invalidateModel();refreshDataset();});
+$('saveSampleBtn').addEventListener('click',()=>{if(state.trainingInProgress||!state.pendingRaw||!state.pendingWindow||state.pendingLabelIndex==null)return;state.samples.push(Float32Array.from(state.pendingWindow));state.rawSamples.push({data:Float32Array.from(state.pendingRaw.data),length:state.pendingRaw.length});state.targets.push(state.pendingLabelIndex);state.rawLengths.push(state.pendingRaw.length);state.durationsMs.push(state.pendingDurationMs||0);log(`Saved “${state.labels[state.pendingLabelIndex]}”: raw=${state.pendingRaw.length}, normalized=${state.N}×6.`);state.pendingRaw=null;state.pendingWindow=null;state.pendingLabelIndex=null;state.pendingDurationMs=0;$('saveSampleBtn').disabled=true;$('discardSampleBtn').disabled=true;$('recordProgress').textContent='Saved. Select a label and hold BOOT for another gesture.';invalidateModel();refreshDataset();});
 $('discardSampleBtn').addEventListener('click',()=>{state.recording=null;state.pendingRaw=null;state.pendingWindow=null;state.pendingLabelIndex=null;state.pendingGestureEnd=null;$('saveSampleBtn').disabled=true;$('discardSampleBtn').disabled=true;$('recordProgress').textContent='Discarded. Hold BOOT when ready for another gesture.';});
 
 $('saveDatasetBtn').addEventListener('click',async()=>{try{const blob=await NAI.buildDatasetNpzBlob(datasetObject());downloadBlob(blob,'noodleai_dataset.npz');log('Saved NAI4 dataset (.npz).');}catch(e){alert(e.message);}});
 $('loadDatasetBtn').addEventListener('click',()=>$('datasetFile').click());
 $('datasetFile').addEventListener('change',async e=>{try{const file=e.target.files[0];if(!file)return;if((state.targets.length||state.setupLocked)&&!confirm('Replace the current dataset/setup?'))return;const arrays=await NAI.loadNpz(file);const ds=NAI.parseDatasetArrays(arrays);resetDataset(false);state.N=ds.N;$('normalizedLength').value=String(ds.N);state.labels=[...ds.labels];state.samples=ds.Xrows.map(r=>Float32Array.from(r));state.targets=Array.from(ds.y,Number);state.rawSamples=ds.rawRows?ds.rawRows.map(r=>({data:Float32Array.from(r.data),length:r.length})):[];state.rawLengths=arrays.raw_lengths?Array.from(arrays.raw_lengths.data,Number):Array(state.targets.length).fill(ds.N);state.durationsMs=arrays.durations_ms?Array.from(arrays.durations_ms.data,Number):Array(state.targets.length).fill(0);refreshLabels();lockUi(true);refreshDataset();$('recordProgress').textContent=`Loaded ${state.targets.length} samples from ${file.name}.`;log(`Loaded ${file.name}: ${state.targets.length} samples; raw gestures ${state.rawSamples.length===state.targets.length?'available':'not available'}.`);}catch(err){alert(err.message);log(`Dataset load ERROR: ${err.message}`);}finally{e.target.value='';}});
 
+// Results remain explicitly tied to the latest trained model and dataset.
+function addCell(tr,tag,value,extraClass=''){
+  const e=document.createElement(tag);e.textContent=String(value);
+  if(extraClass)e.className=extraClass;
+  tr.appendChild(e);return e;
+}
+function renderMetrics(){
+  const report=state.report;
+  $('metricsArea').hidden=!report;
+  $('downloadReportBtn').disabled=!report||state.trainingInProgress;
+  if(!report)return;
+  const {train,validation,metadata}=report;
+  $('metricTrainAccuracy').textContent=pct(train.accuracy);
+  $('metricTrainCount').textContent=`${train.correct} / ${train.n} correct`;
+  $('metricValAccuracy').textContent=pct(validation.accuracy);
+  $('metricValCount').textContent=`${validation.correct} / ${validation.n} correct`;
+  $('metricPrecision').textContent=score(validation.macro.precision);
+  $('metricRecall').textContent=score(validation.macro.recall);
+  $('metricF1').textContent=score(validation.macro.f1);
+  $('metricWeightedF1').textContent=score(validation.weighted.f1);
+  const smallest=Math.min(...validation.perClass.map(r=>r.support));
+  const caveat=smallest<5?` Caution: the smallest validation class has only ${smallest} example(s), making per-class scores unstable.`:'';
+  $('methodologyNote').textContent=`${metadata.method} · seed ${metadata.seed} · ${train.n} train / ${validation.n} validation gestures · ${metadata.epochs} epochs · macro: unweighted class average · precision/recall/F1 shown on a 0–1 scale.${caveat}`;
+  const classBody=$('classMetricsBody');classBody.innerHTML='';
+  for(const r of validation.perClass){
+    const tr=document.createElement('tr');
+    [r.label,r.support,score(r.precision),score(r.recall),score(r.f1)].forEach((v,i)=>addCell(tr,'td',v,i===0?'class-name':''));
+    classBody.appendChild(tr);
+  }
+  const head=$('confusionHead');head.innerHTML='';
+  const hrow=document.createElement('tr');addCell(hrow,'th','Actual ↓ / Predicted →');
+  validation.labels.forEach(label=>addCell(hrow,'th',label));head.appendChild(hrow);
+  const body=$('confusionBody');body.innerHTML='';
+  validation.matrix.forEach((row,i)=>{
+    const tr=document.createElement('tr');addCell(tr,'th',validation.labels[i]);
+    row.forEach((n,j)=>addCell(tr,'td',n,n?(i===j?'confusion-hit':'confusion-error'):''));
+    body.appendChild(tr);
+  });
+}
+
+$('downloadReportBtn').addEventListener('click',async()=>{
+  if(!state.report||state.trainingInProgress)return;
+  try{
+    $('downloadReportBtn').disabled=true;
+    const zip=new JSZip();
+    const files=window.NoodleMetrics.buildReportFiles(state.report);
+    Object.entries(files).forEach(([name,content])=>zip.file(name,content));
+    // Export curves at their actual pixel resolution for paper figures.
+    for(const [id,name] of [['lossCanvas','loss_vs_epoch.png'],['accuracyCanvas','accuracy_vs_epoch.png']]){
+      const canvas=$(id);
+      if(typeof canvas.toDataURL==='function'){
+        const data=canvas.toDataURL('image/png');
+        if(data.startsWith('data:image/png;base64,'))zip.file(name,data.split(',')[1],{base64:true});
+      }
+    }
+    const blob=await zip.generateAsync({type:'blob'});
+    downloadBlob(blob,'noodleai_paper_results.zip');
+    log('Exported final-epoch validation report (CSV, metadata, and charts).');
+  }catch(e){alert(`Report export failed: ${e.message}`);log(`Report ERROR: ${e.message}`);}
+  finally{$('downloadReportBtn').disabled=!state.report||state.trainingInProgress;}
+});
+
 async function trainModel(){
+  if(state.trainingInProgress)return;
+  let model=null,tx=null,vx=null,ty=null,vy=null;
   try{
     if(!state.setupLocked||!state.targets.length)throw new Error('Create or load a dataset first.');
-    const hidden=parseHidden(),epochs=Number($('epochs').value),rep=selectedRep();if(!Number.isInteger(epochs)||epochs<10||epochs>5000)throw new Error('Epochs must be 10..5000.');
-    const ds=datasetObject();const K=state.labels.length;const counts=Array(K).fill(0);state.targets.forEach(y=>counts[y]++);if(Math.min(...counts)<2)throw new Error('Each class needs at least two samples for a stratified train/validation split.');
-    $('trainBtn').disabled=true;$('trainResult').textContent='Preparing representation…';
-    const rows=NAI.buildRepresentationDataset(ds,rep);const D=rows[0].length;const split=NAI.sklearnStratifiedSplit(ds.y,K,42);const scaler=NAI.fitScaler(rows,split.train);const Xtr=NAI.standardizeRows(rows,split.train,scaler),Xva=NAI.standardizeRows(rows,split.test,scaler);const ytr=Int32Array.from(split.train.map(i=>ds.y[i])),yva=Int32Array.from(split.test.map(i=>ds.y[i]));
-    const model=NAI.makeModel(D,hidden,K,split.train.length);const tx=tf.tensor2d(NAI.flattenRows(Xtr),[Xtr.length,D],'float32'),vx=tf.tensor2d(NAI.flattenRows(Xva),[Xva.length,D],'float32');let ty,vy;if(K===2){ty=tf.tensor2d(Float32Array.from(ytr),[ytr.length,1]);vy=tf.tensor2d(Float32Array.from(yva),[yva.length,1]);}else{const ity=tf.tensor1d(ytr,'int32'),ivy=tf.tensor1d(yva,'int32');ty=tf.oneHot(ity,K);vy=tf.oneHot(ivy,K);ity.dispose();ivy.dispose();}
-    const hist={epoch:[],loss:[],valLoss:[],acc:[],valAcc:[]};$('trainResult').textContent=`Training ${D} → ${hidden.join(' → ')} → ${K}…`;switchTab('curves');
-    await model.fit(tx,ty,{epochs,batchSize:Math.min(200,split.train.length),shuffle:true,validationData:[vx,vy],verbose:0,callbacks:{onEpochEnd:async(epoch,l)=>{const acc=l.acc??l.accuracy??0,va=l.val_acc??l.val_accuracy??0;hist.epoch.push(epoch+1);hist.loss.push(l.loss);hist.valLoss.push(l.val_loss);hist.acc.push(acc);hist.valAcc.push(va);if(epoch===0||(epoch+1)%5===0||epoch+1===epochs){$('curveSummary').textContent=`Epoch ${epoch+1}/${epochs} · loss ${l.loss.toFixed(4)} · validation accuracy ${pct(va)}`;drawTrainingCurves(hist);await tf.nextFrame();}}}});
-    tx.dispose();vx.dispose();ty.dispose();vy.dispose();
-    const tr=await NAI.predictTf(model,Xtr,K),va=await NAI.predictTf(model,Xva,K);const trainAcc=NAI.accuracy(tr.pred,Array.from(ytr)),valAcc=NAI.accuracy(va.pred,Array.from(yva));const pkg=await NAI.exportNai4(model,scaler,state.labels,state.N,rep);
-    if(state.model){try{state.model.dispose();}catch(_){}}state.model=model;state.scaler=scaler;state.pkg=pkg;state.history=hist;state.trainedRep=rep;
-    $('trainResult').textContent=`Train ${pct(trainAcc)} · validation ${pct(valAcc)} · NAI4 ${(pkg.total/1024).toFixed(1)} KiB`;$('curveSummary').textContent=`Finished ${epochs} epochs · train ${pct(trainAcc)} · validation ${pct(valAcc)} · ${REP_LABEL[rep]}`;$('saveModelBtn').disabled=false;$('deployBtn').disabled=!window.noodleBLE.connected;drawTrainingCurves(hist);log(`Training complete: ${REP_LABEL[rep]}, topology ${pkg.dims.join('→')}, train=${pct(trainAcc)}, validation=${pct(valAcc)}, NAI4=${(pkg.total/1024).toFixed(1)} KiB.`);switchTab('dataset');
-  }catch(e){alert(e.message);log(`Training ERROR: ${e.message}`);}finally{$('trainBtn').disabled=!(state.setupLocked&&state.targets.length);}
+    const hidden=parseHidden(),epochs=Number($('epochs').value),rep=selectedRep();
+    if(!Number.isInteger(epochs)||epochs<10||epochs>5000)throw new Error('Epochs must be 10..5000.');
+    const ds=datasetObject(),K=ds.labels.length;
+    const counts=Array(K).fill(0);ds.y.forEach(y=>{if(y<0||y>=K)throw new Error('Invalid dataset label.');counts[y]++;});
+    if(Math.min(...counts)<2)throw new Error('Each class needs at least two samples for a stratified train/validation split.');
+    state.trainingInProgress=true;
+    // New run supersedes stale metrics and previously trained parameters.
+    invalidateModel();lockUi(state.setupLocked);
+    $('trainResult').textContent='Preparing representation…';
+    const rows=NAI.buildRepresentationDataset(ds,rep),D=rows[0].length;
+    const initialSplit=NAI.sklearnStratifiedSplit(ds.y,K,42);
+    const split=window.NoodleMetrics.ensureClassCoverage(initialSplit,ds.y,K);
+    const scaler=NAI.fitScaler(rows,split.train);
+    const Xtr=NAI.standardizeRows(rows,split.train,scaler),Xva=NAI.standardizeRows(rows,split.test,scaler);
+    const ytr=Int32Array.from(split.train.map(i=>ds.y[i])),yva=Int32Array.from(split.test.map(i=>ds.y[i]));
+    model=NAI.makeModel(D,hidden,K,split.train.length);
+    tx=tf.tensor2d(NAI.flattenRows(Xtr),[Xtr.length,D],'float32');
+    vx=tf.tensor2d(NAI.flattenRows(Xva),[Xva.length,D],'float32');
+    if(K===2){
+      ty=tf.tensor2d(Float32Array.from(ytr),[ytr.length,1]);
+      vy=tf.tensor2d(Float32Array.from(yva),[yva.length,1]);
+    }else{
+      const ity=tf.tensor1d(ytr,'int32'),ivy=tf.tensor1d(yva,'int32');
+      try{ty=tf.oneHot(ity,K);vy=tf.oneHot(ivy,K);}finally{ity.dispose();ivy.dispose();}
+    }
+    const hist={epoch:[],loss:[],valLoss:[],acc:[],valAcc:[]};
+    $('trainResult').textContent=`Training ${D} → ${hidden.join(' → ')} → ${K}…`;
+    switchTab('curves');
+    await model.fit(tx,ty,{epochs,batchSize:Math.min(200,split.train.length),shuffle:true,
+      validationData:[vx,vy],verbose:0,callbacks:{onEpochEnd:async(epoch,l)=>{
+        const acc=l.acc??l.accuracy??0,va=l.val_acc??l.val_accuracy??0;
+        hist.epoch.push(epoch+1);hist.loss.push(l.loss);hist.valLoss.push(l.val_loss);
+        hist.acc.push(acc);hist.valAcc.push(va);
+        if(epoch===0||(epoch+1)%5===0||epoch+1===epochs){
+          $('curveSummary').textContent=`Epoch ${epoch+1}/${epochs} · loss ${l.loss.toFixed(4)} · validation accuracy ${pct(va)}`;
+          drawTrainingCurves(hist);await tf.nextFrame();
+        }
+      }}});
+    const tr=await NAI.predictTf(model,Xtr,K),va=await NAI.predictTf(model,Xva,K);
+    const train=window.NoodleMetrics.evaluate(ytr,tr.pred,ds.labels);
+    const validation=window.NoodleMetrics.evaluate(yva,va.pred,ds.labels);
+    const pkg=await NAI.exportNai4(model,scaler,ds.labels,ds.N,rep);
+    const report={train,validation,history:hist,split,
+      validationPredictions:split.test.map((datasetIndex,i)=>({datasetIndex,actual:Number(yva[i]),predicted:Number(va.pred[i]),probabilities:Array.from(va.probs[i])})),
+      metadata:{createdUtc:new Date().toISOString(),model_format:'NAI4 FP32',architecture:pkg.dims,
+        representation:rep,representation_label:REP_LABEL[rep],normalizedLength:ds.N,sampleRateHz:ds.sampleRate,
+        labels:[...ds.labels],targets:Array.from(ds.y),hiddenLayers:hidden,epochs,
+        optimizer:'Adam',learningRate:0.001,batchSize:Math.min(200,split.train.length),seed:42,
+        method:'20% stratified validation holdout (at least one example per class per split)',coverageAdjusted:split.coverageAdjusted,
+        testSet:'None; these are held-out validation scores, not external test scores',
+        note:'Scaler fitted on training data only. Final epoch evaluated. Repeated validation-guided model selection biases scores.'}};
+    state.model=model;model=null;
+    state.scaler=scaler;state.pkg=pkg;state.history=hist;state.report=report;state.trainedRep=rep;
+    $('trainResult').textContent=`Train ${pct(train.accuracy)} · validation ${pct(validation.accuracy)} · macro F1 ${score(validation.macro.f1)} · NAI4 ${(pkg.total/1024).toFixed(1)} KiB`;
+    $('curveSummary').textContent=`Final epoch ${epochs} · ${REP_LABEL[rep]} · ${train.n} train / ${validation.n} validation samples · seed 42`;
+    $('saveModelBtn').disabled=false;$('deployBtn').disabled=!window.noodleBLE.connected;
+    drawTrainingCurves(hist);renderMetrics();
+    log(`Training complete: ${REP_LABEL[rep]}, topology ${pkg.dims.join('→')}, validation accuracy=${pct(validation.accuracy)}, precision=${score(validation.macro.precision)}, recall=${score(validation.macro.recall)}, macro F1=${score(validation.macro.f1)}.`);
+    switchTab('curves');
+  }catch(e){alert(e.message);log(`Training ERROR: ${e.message}`);}
+  finally{
+    for(const t of [tx,vx,ty,vy])if(t)try{t.dispose();}catch(_){}
+    if(model)try{model.dispose();}catch(_){}
+    state.trainingInProgress=false;lockUi(state.setupLocked);
+  }
 }
 $('trainBtn').addEventListener('click',trainModel);
 
@@ -127,7 +306,7 @@ $('deployBtn').addEventListener('click',async()=>{if(!state.pkg)return;try{$('de
 $('trainingModeBtn').addEventListener('click',async()=>{try{await window.noodleBLE.setTraining();}catch(e){alert(e.message);}});$('inferenceModeBtn').addEventListener('click',async()=>{try{await window.noodleBLE.setInference();}catch(e){alert(e.message);}});
 
 $('connectBtn').addEventListener('click',async()=>{try{if(window.noodleBLE.connected)await window.noodleBLE.disconnect();else await window.noodleBLE.connect();}catch(e){alert(e.message);log(`BLE ERROR: ${e.message}`);}});
-window.noodleBLE.addEventListener('connected',e=>{$('connectBtn').textContent='Disconnect';$('bleBadge').textContent='Connected';$('bleBadge').classList.remove('badge-muted');$('deviceStatus').textContent=`Connected: ${e.detail.name}`;$('supportNote').textContent='Raw six-axis stream active.';$('trainingModeBtn').disabled=false;$('inferenceModeBtn').disabled=false;$('armRecordBtn').disabled=!state.setupLocked;$('deployBtn').disabled=!state.pkg;setBootStatus('BOOT ready · press to capture');log(`BLE connected to ${e.detail.name}.`);});
+window.noodleBLE.addEventListener('connected',e=>{$('connectBtn').textContent='Disconnect';$('bleBadge').textContent='Connected';$('bleBadge').classList.remove('badge-muted');$('deviceStatus').textContent=`Connected: ${e.detail.name}`;$('supportNote').textContent='Raw six-axis stream active.';$('trainingModeBtn').disabled=false;$('inferenceModeBtn').disabled=false;$('armRecordBtn').disabled=!state.setupLocked||state.trainingInProgress;$('deployBtn').disabled=!state.pkg;setBootStatus('BOOT ready · press to capture');log(`BLE connected to ${e.detail.name}.`);});
 window.noodleBLE.addEventListener('disconnected',()=>{$('connectBtn').textContent='Connect';$('bleBadge').textContent='Disconnected';$('bleBadge').classList.add('badge-muted');$('deviceStatus').textContent='Disconnected';$('supportNote').textContent=window.NoodleAIBLE.supportMessage();$('trainingModeBtn').disabled=true;$('inferenceModeBtn').disabled=true;$('armRecordBtn').disabled=true;$('deployBtn').disabled=true;setBootStatus('Ready when connected');log('BLE disconnected.');});
 window.noodleBLE.addEventListener('warning',e=>log(`BLE warning: ${e.detail.text}`));window.noodleBLE.addEventListener('deploy-log',e=>log(e.detail.text));
 
@@ -138,10 +317,21 @@ window.noodleBLE.addEventListener('status',e=>{const text=e.detail.text;if(e.det
 function pushLive(s){const L=250;state.live.t.push(s.t_ms/1000);const av=[s.ax,s.ay,s.az],gv=[s.gx,s.gy,s.gz];for(let c=0;c<3;c++){state.live.accel[c].push(av[c]);state.live.gyro[c].push(gv[c]);}if(state.live.t.length>L){state.live.t.shift();for(const a of state.live.accel)a.shift();for(const a of state.live.gyro)a.shift();}drawLineChart($('accelCanvas'),state.live.accel,['ax','ay','az']);drawLineChart($('gyroCanvas'),state.live.gyro,['gx','gy','gz']);}
 $('clearPlotBtn').addEventListener('click',()=>{state.live={t:[],accel:[[],[],[]],gyro:[[],[],[]]};drawLiveEmpty();});
 
-function drawLineChart(canvas,series,labels,{fixedY=null}={}){const ctx=canvas.getContext('2d'),W=canvas.width,H=canvas.height,pad={l:42,r:14,t:18,b:28};ctx.clearRect(0,0,W,H);ctx.fillStyle='#fbfcfe';ctx.fillRect(0,0,W,H);const all=series.flat().filter(Number.isFinite);let lo=fixedY?fixedY[0]:(all.length?Math.min(...all):-1),hi=fixedY?fixedY[1]:(all.length?Math.max(...all):1);if(Math.abs(hi-lo)<1e-9){lo-=1;hi+=1;}if(!fixedY){const p=.12*(hi-lo);lo-=p;hi+=p;}ctx.strokeStyle='#e3e8ef';ctx.lineWidth=1;for(let k=0;k<=4;k++){const y=pad.t+k*(H-pad.t-pad.b)/4;ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(W-pad.r,y);ctx.stroke();}ctx.fillStyle='#758092';ctx.font='12px system-ui';ctx.textAlign='right';ctx.fillText(hi.toFixed(2),pad.l-6,pad.t+4);ctx.fillText(lo.toFixed(2),pad.l-6,H-pad.b);const colors=['#2869df','#00a37a','#d88a14','#8f5bd6'];series.forEach((a,c)=>{if(a.length<2)return;ctx.strokeStyle=colors[c%colors.length];ctx.lineWidth=1.8;ctx.beginPath();for(let i=0;i<a.length;i++){const x=pad.l+i*(W-pad.l-pad.r)/Math.max(1,a.length-1),y=pad.t+(hi-a[i])*(H-pad.t-pad.b)/(hi-lo);if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);}ctx.stroke();});ctx.textAlign='left';labels.forEach((l,i)=>{ctx.fillStyle=colors[i%colors.length];ctx.fillRect(pad.l+i*82,H-15,12,3);ctx.fillStyle='#596476';ctx.fillText(l,pad.l+17+i*82,H-10);});}
+function drawLineChart(canvas,series,labels,{fixedY=null,xLabel=null,percentY=false}={}){const ctx=canvas.getContext('2d'),W=canvas.width,H=canvas.height,pad={l:52,r:14,t:18,b:xLabel?48:28};ctx.clearRect(0,0,W,H);ctx.fillStyle='#fbfcfe';ctx.fillRect(0,0,W,H);const all=series.flat().filter(Number.isFinite);let lo=fixedY?fixedY[0]:(all.length?Math.min(...all):-1),hi=fixedY?fixedY[1]:(all.length?Math.max(...all):1);if(Math.abs(hi-lo)<1e-9){lo-=1;hi+=1;}if(!fixedY){const p=.12*(hi-lo);lo-=p;hi+=p;}ctx.strokeStyle='#e3e8ef';ctx.lineWidth=1;for(let k=0;k<=4;k++){const y=pad.t+k*(H-pad.t-pad.b)/4;ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(W-pad.r,y);ctx.stroke();}ctx.fillStyle='#758092';ctx.font='12px system-ui';ctx.textAlign='right';for(let k=0;k<=4;k++){const v=hi-(hi-lo)*k/4;const y=pad.t+(H-pad.t-pad.b)*k/4;ctx.fillText(percentY?`${(100*v).toFixed(0)}%`:v.toFixed(2),pad.l-6,y+4);}if(xLabel&&series.some(a=>a.length)){const n=Math.max(...series.map(a=>a.length));ctx.textAlign='left';ctx.fillText(`${xLabel} 1`,pad.l,H-pad.b+17);ctx.textAlign='right';ctx.fillText(`${xLabel} ${n}`,W-pad.r,H-pad.b+17);}const colors=['#2869df','#00a37a','#d88a14','#8f5bd6'];series.forEach((a,c)=>{if(a.length<2)return;ctx.strokeStyle=colors[c%colors.length];ctx.lineWidth=1.8;ctx.beginPath();for(let i=0;i<a.length;i++){const x=pad.l+i*(W-pad.l-pad.r)/Math.max(1,a.length-1),y=pad.t+(hi-a[i])*(H-pad.t-pad.b)/(hi-lo);if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);}ctx.stroke();});ctx.textAlign='left';labels.forEach((l,i)=>{ctx.fillStyle=colors[i%colors.length];ctx.fillRect(pad.l+i*82,H-15,12,3);ctx.fillStyle='#596476';ctx.fillText(l,pad.l+17+i*82,H-10);});}
 function drawLiveEmpty(){drawLineChart($('accelCanvas'),[[],[],[]],['ax','ay','az']);drawLineChart($('gyroCanvas'),[[],[],[]],['gx','gy','gz']);}
 
-function drawTrainingCurves(h=state.history){if(!h||!h.epoch?.length){drawLineChart($('lossCanvas'),[[],[]],['train','validation']);drawLineChart($('accuracyCanvas'),[[],[]],['train','validation'],{fixedY:[0,1]});return;}drawLineChart($('lossCanvas'),[h.loss,h.valLoss],['train loss','validation loss']);drawLineChart($('accuracyCanvas'),[h.acc,h.valAcc],['train accuracy','validation accuracy'],{fixedY:[0,1]});}
+function drawTrainingCurves(h=state.history){
+  if(!h||!h.epoch?.length){
+    drawLineChart($('lossCanvas'),[[],[]],['train','validation']);
+    drawLineChart($('accuracyCanvas'),[[],[]],['train','validation'],{fixedY:[0,1]});
+    $('lossNumbers').textContent='Final losses —';$('accuracyNumbers').textContent='Final accuracies —';return;
+  }
+  drawLineChart($('lossCanvas'),[h.loss,h.valLoss],['train loss','validation loss'],{xLabel:'Epoch'});
+  drawLineChart($('accuracyCanvas'),[h.acc,h.valAcc],['train accuracy','validation accuracy'],{fixedY:[0,1],xLabel:'Epoch',percentY:true});
+  const last=h.epoch.length-1;
+  $('lossNumbers').textContent=`Epoch ${h.epoch[last]}  ·  train loss ${h.loss[last].toFixed(4)}  ·  validation loss ${h.valLoss[last].toFixed(4)}`;
+  $('accuracyNumbers').textContent=`Epoch ${h.epoch[last]}  ·  train ${pct(h.acc[last])}  ·  validation ${pct(h.valAcc[last])}`;
+}
 
 $('clearLogBtn').addEventListener('click',()=>$('log').textContent='');
 $('supportNote').textContent=window.NoodleAIBLE.supportMessage();

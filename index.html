@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#09111f">
   <meta name="description" content="NoodleAI Studio Mode 1 for ESP32-S3-Matrix: capture BOOT-delimited QMI8658 gestures, train locally, deploy NAI4 models, and run Noodle inference on-device.">
   <title>NoodleAI Studio · Mode 1</title>
-  <link rel="stylesheet" href="style.css?v=mode1-studio">
+  <link rel="stylesheet" href="style.css?v=mode1-metrics-v1">
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 </head>
@@ -63,7 +63,7 @@
     <nav class="tabs" aria-label="NoodleAI workspace">
       <button class="tab active" data-tab="live"><span>01</span>Live IMU</button>
       <button class="tab" data-tab="dataset"><span>02</span>Capture &amp; Train</button>
-      <button class="tab" data-tab="curves"><span>03</span>Training Curves</button>
+      <button class="tab" data-tab="curves"><span>03</span>Results &amp; Curves</button>
       <button class="tab" data-tab="deploy"><span>04</span>Deploy &amp; Infer</button>
     </nav>
 
@@ -108,7 +108,7 @@
           <div class="panel">
             <div class="section-title">
               <span class="step">1</span>
-              <div><div class="section-kicker">DATASET</div><h2>Define gesture normalization</h2><p>Each BOOT-delimited gesture may last a different amount of time. Mode 1 resamples it to a fixed number of points before training.</p></div>
+              <div><div class="section-kicker">DATASET</div><h2>Define gesture normalization</h2><p>Each BOOT-delimited gesture may last a different amount of time. The gesture length is fixed when capture starts; classes can still be added later.</p></div>
             </div>
 
             <div class="form-grid setup-grid">
@@ -120,11 +120,12 @@
             <div class="label-editor">
               <div class="label-add"><input id="labelEntry" placeholder="Class label, e.g. wave"><button id="addLabelBtn" class="secondary">Add class</button></div>
               <select id="labelList" size="4" aria-label="Defined labels"></select>
-              <button id="removeLabelBtn" class="ghost">Remove selected</button>
+              <button id="removeLabelBtn" class="ghost">Remove empty class</button>
             </div>
+            <p class="class-edit-hint">Add classes anytime, even after training. Existing samples are kept; class changes require retraining. Classes with recorded samples cannot be removed.</p>
 
             <div class="action-row split-actions">
-              <div><button id="lockSetupBtn" class="primary">Lock setup</button><button id="resetDatasetBtn" class="ghost">Reset</button></div>
+              <div><button id="lockSetupBtn" class="primary">Lock gesture length &amp; start</button><button id="resetDatasetBtn" class="ghost">Reset</button></div>
               <div><button id="loadDatasetBtn" class="secondary">Load .npz</button><button id="saveDatasetBtn" class="secondary" disabled>Save .npz</button><input id="datasetFile" type="file" accept=".npz" hidden></div>
             </div>
           </div>
@@ -174,10 +175,30 @@
 
       <section id="tab-curves" class="tab-page">
         <div class="panel">
-          <div class="section-head"><div><div class="section-kicker">MODEL DIAGNOSTICS</div><h2>Training &amp; validation</h2><p id="curveSummary">Train a model to see loss and accuracy history.</p></div></div>
+          <div class="section-head">
+            <div><div class="section-kicker">MODEL DIAGNOSTICS</div><h2>Training curves &amp; classification metrics</h2><p id="curveSummary">Train a model to see loss, accuracy, and validation metrics.</p></div>
+            <div class="section-actions"><button id="downloadReportBtn" class="secondary" disabled>Export paper report (.zip)</button></div>
+          </div>
           <div class="chart-stack curves-grid">
-            <div class="chart-card"><div class="chart-title"><div><strong>Loss</strong><small>Optimization convergence</small></div><span>train / validation</span></div><canvas id="lossCanvas" width="1100" height="280"></canvas></div>
-            <div class="chart-card"><div class="chart-title"><div><strong>Accuracy</strong><small>Generalization performance</small></div><span>train / validation</span></div><canvas id="accuracyCanvas" width="1100" height="280"></canvas></div>
+            <div class="chart-card"><div class="chart-title"><div><strong>Loss vs. epoch</strong><small>Optimization convergence</small></div><span>train / validation</span></div><canvas id="lossCanvas" width="1100" height="280"></canvas><div class="plot-numbers" id="lossNumbers">Final losses —</div></div>
+            <div class="chart-card"><div class="chart-title"><div><strong>Accuracy vs. epoch</strong><small>Sample-level correctness</small></div><span>train / validation</span></div><canvas id="accuracyCanvas" width="1100" height="280"></canvas><div class="plot-numbers" id="accuracyNumbers">Final accuracies —</div></div>
+          </div>
+          <div id="metricsArea" class="results-area" hidden>
+            <div class="results-title"><h3>Final epoch · validation performance</h3><p>Stratified holdout from captured gestures. Scores are calculated from predictions, not approximated from the training graph.</p></div>
+            <div class="metrics-grid" aria-label="Classification summary">
+              <div class="metric-card"><span>Training accuracy</span><strong id="metricTrainAccuracy">—</strong><small id="metricTrainCount">—</small></div>
+              <div class="metric-card emphasized"><span>Validation accuracy</span><strong id="metricValAccuracy">—</strong><small id="metricValCount">—</small></div>
+              <div class="metric-card"><span>Macro precision</span><strong id="metricPrecision">—</strong><small>Validation</small></div>
+              <div class="metric-card"><span>Macro recall</span><strong id="metricRecall">—</strong><small>Validation</small></div>
+              <div class="metric-card"><span>Macro F1-score</span><strong id="metricF1">—</strong><small>Validation</small></div>
+              <div class="metric-card"><span>Weighted F1-score</span><strong id="metricWeightedF1">—</strong><small>Validation</small></div>
+            </div>
+            <p class="methodology" id="methodologyNote"></p>
+            <div class="results-tables">
+              <div class="results-table-card"><h3>Validation metrics by gesture class</h3><div class="table-scroll"><table class="report-table"><thead><tr><th>Class</th><th>Samples</th><th>Precision</th><th>Recall</th><th>F1</th></tr></thead><tbody id="classMetricsBody"></tbody></table></div></div>
+              <div class="results-table-card"><h3>Validation confusion matrix</h3><p class="table-caption">Rows: actual gesture · columns: predicted gesture</p><div class="table-scroll"><table class="report-table confusion-table"><thead id="confusionHead"></thead><tbody id="confusionBody"></tbody></table></div></div>
+            </div>
+            <p class="methodology paper-caution">For publication: this is a single held-out validation partition, not an external test set. Repeated trials on this split are not independent evidence of generalization; use a separate test set or subject-wise evaluation for final claims.</p>
           </div>
         </div>
       </section>
@@ -226,6 +247,7 @@
 
   <script src="js/core.js?v=mode1-studio"></script>
   <script src="js/ble.js?v=mode1-studio"></script>
-  <script src="js/app.js?v=mode1-studio"></script>
+  <script src="js/metrics.js?v=mode1-metrics-v1"></script>
+  <script src="js/app.js?v=mode1-metrics-v1"></script>
 </body>
 </html>
