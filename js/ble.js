@@ -55,7 +55,7 @@ class NoodleAIBLE extends EventTarget {
     this.statusChar.addEventListener('characteristicvaluechanged',this._onStatus);
     await this.imuChar.startNotifications();
     this.imuChar.addEventListener('characteristicvaluechanged',this._onImu);
-    this.connected=true; this.packetCount=0;
+    this.connected=true; this.packetCount=0;this.precision=null;
     this.emit('connected',{name:this.device.name||'NoodleAI'});
     try {
       const v=await this.statusChar.readValue();
@@ -69,7 +69,7 @@ class NoodleAIBLE extends EventTarget {
   }
 
   _onDisconnected() {
-    this.connected=false; this.mode='?';
+    this.connected=false; this.mode='?';this.precision=null;
     this.rejectAllWaiters(new Error('BLE disconnected'));
     this.emit('disconnected');
   }
@@ -83,6 +83,8 @@ class NoodleAIBLE extends EventTarget {
   }
 
   _handleStatus(text, notify=true) {
+    if(text==='NAI_PRECISION:FP32')this.precision='fp32';
+    else if(text==='NAI_PRECISION:INT8')this.precision='int8';
     if(text==='MODE:T') this.mode='T';
     else if(text==='MODE:I') this.mode='I';
     this.emit('status',{text,notify,mode:this.mode});

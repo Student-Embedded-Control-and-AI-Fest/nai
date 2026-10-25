@@ -12,7 +12,7 @@ const MAX_CLASSES=10; // Keep in sync with NoodleAIModel::MAX_CLASSES in the ESP
 const state={
   labels:[],samples:[],rawSamples:[],targets:[],rawLengths:[],durationsMs:[],N:100,setupLocked:false,trainingInProgress:false,
   pendingRaw:null,pendingWindow:null,pendingLabelIndex:null,pendingDurationMs:0,pendingGestureEnd:null,recording:null,
-  model:null,scaler:null,pkg:null,history:null,report:null,trainedRep:null,deviceMode:'?',
+  model:null,scaler:null,pkg:null,int8Pkg:null,history:null,report:null,trainedRep:null,deviceMode:'?',
   live:{t:[],accel:[[],[],[]],gyro:[[],[],[]]},
 };
 
@@ -65,7 +65,7 @@ function refreshDataset(){
   $('trainBtn').disabled=!(state.setupLocked&&n>0)||state.trainingInProgress;
 }
 
-function invalidateModel(){if(state.model){try{state.model.dispose();}catch(_){}}state.model=null;state.scaler=null;state.pkg=null;state.history=null;state.report=null;state.trainedRep=null;$('saveModelBtn').disabled=true;$('deployBtn').disabled=true;$('trainResult').textContent='';$('curveSummary').textContent='Train a model to see loss, accuracy, and validation metrics.';renderMetrics();drawTrainingCurves();}
+function invalidateModel(){if(state.model){try{state.model.dispose();}catch(_){}}state.model=null;state.scaler=null;state.pkg=null;state.int8Pkg=null;state.history=null;state.report=null;state.trainedRep=null;$('saveModelBtn').disabled=true;$('saveInt8Btn').disabled=true;$('quantResult').textContent='Train a model to evaluate INT8 quantization.';$('deployBtn').disabled=true;$('trainResult').textContent='';$('curveSummary').textContent='Train a model to see loss, accuracy, and validation metrics.';renderMetrics();drawTrainingCurves();}
 
 function lockUi(locked){
   state.setupLocked=locked;
@@ -275,6 +275,10 @@ async function trainModel(){
     const train=window.NoodleMetrics.evaluate(ytr,tr.pred,ds.labels);
     const validation=window.NoodleMetrics.evaluate(yva,va.pred,ds.labels);
     const pkg=await NAI.exportNai4(model,scaler,ds.labels,ds.N,rep);
+    // PTQ uses ONLY the training split for calibration. Validation data is
+    // never used to derive weight/activation scales or the fixed threshold.
+    const int8Pkg=await NAI.exportNai4Int8(model,scaler,ds.labels,ds.N,rep,Xtr,Xva,yva);
+    const quantMetrics=window.NoodleMetrics.evaluate(yva,int8Pkg.validationPredictions,ds.labels);
     const report={train,validation,history:hist,split,
       validationPredictions:split.test.map((datasetIndex,i)=>({datasetIndex,actual:Number(yva[i]),predicted:Number(va.pred[i]),probabilities:Array.from(va.probs[i])})),
       metadata:{createdUtc:new Date().toISOString(),model_format:'NAI4 FP32',architecture:pkg.dims,
@@ -285,10 +289,11 @@ async function trainModel(){
         testSet:'None; these are held-out validation scores, not external test scores',
         note:'Scaler fitted on training data only. Final epoch evaluated. Repeated validation-guided model selection biases scores.'}};
     state.model=model;model=null;
-    state.scaler=scaler;state.pkg=pkg;state.history=hist;state.report=report;state.trainedRep=rep;
+    state.scaler=scaler;state.pkg=pkg;state.int8Pkg=int8Pkg;state.history=hist;state.report=report;state.trainedRep=rep;
     $('trainResult').textContent=`Train ${pct(train.accuracy)} · validation ${pct(validation.accuracy)} · macro F1 ${score(validation.macro.f1)} · NAI4 ${(pkg.total/1024).toFixed(1)} KiB`;
     $('curveSummary').textContent=`Final epoch ${epochs} · ${REP_LABEL[rep]} · ${train.n} train / ${validation.n} validation samples · seed 42`;
-    $('saveModelBtn').disabled=false;$('deployBtn').disabled=!window.noodleBLE.connected;
+    $('saveModelBtn').disabled=false;$('saveInt8Btn').disabled=false;$('deployBtn').disabled=!window.noodleBLE.connected;
+    $('quantResult').textContent=`PTQ INT8 validation: accuracy ${pct(quantMetrics.accuracy)}, macro F1 ${score(quantMetrics.macro.f1)} · FP32 accuracy ${pct(validation.accuracy)} · INT8 raw ${(int8Pkg.total/1024).toFixed(1)} KiB. INT8 uses packed wNN + pNN metadata. Deploy only to INT8 firmware.`;
     drawTrainingCurves(hist);renderMetrics();
     log(`Training complete: ${REP_LABEL[rep]}, topology ${pkg.dims.join('→')}, validation accuracy=${pct(validation.accuracy)}, precision=${score(validation.macro.precision)}, recall=${score(validation.macro.recall)}, macro F1=${score(validation.macro.f1)}.`);
     switchTab('curves');
@@ -302,7 +307,15 @@ async function trainModel(){
 $('trainBtn').addEventListener('click',trainModel);
 
 $('saveModelBtn').addEventListener('click',()=>{if(!state.pkg)return;downloadBlob(state.pkg.blob,`noodleai_${state.trainedRep||'model'}.nai`);});
-$('deployBtn').addEventListener('click',async()=>{if(!state.pkg)return;try{$('deployBtn').disabled=true;$('trainingModeBtn').disabled=true;$('inferenceModeBtn').disabled=true;const chunk=Number($('chunkSize').value);await window.noodleBLE.deployPackage(state.pkg.files,{chunkSize:chunk,onProgress:p=>{const prog=$('deployProgress');prog.max=Math.max(1,p.total);prog.value=p.sent;const percent=p.total?Math.round(100*p.sent/p.total):0;const msg={begin:'Starting transactional deployment…','file-begin':`Preparing ${p.file}…`,sending:`${p.file}: ${percent}% total`,commit:'Files verified; validating Noodle model…',done:'MODEL_OK — model activated and ready.',error:`Deployment failed: ${p.error||'unknown error'}`}[p.stage]||p.stage;$('deployText').textContent=msg;}});log('Deployment complete: MODEL_OK.');}catch(e){alert(e.message);log(`Deployment ERROR: ${e.message}`);}finally{$('deployBtn').disabled=!(window.noodleBLE.connected&&state.pkg);$('trainingModeBtn').disabled=!window.noodleBLE.connected;$('inferenceModeBtn').disabled=!window.noodleBLE.connected;}});
+$('saveInt8Btn').addEventListener('click',()=>{if(!state.int8Pkg)return;downloadBlob(state.int8Pkg.blob,`noodleai_${state.trainedRep||'model'}_int8.nai`);});
+$('deployBtn').addEventListener('click',async()=>{if(!state.pkg)return;try{
+  const precision=$('deployPrecision').value;
+  const devicePrecision=window.noodleBLE.precision;
+  if(precision==='int8' && devicePrecision!=='int8') throw new Error('INT8 deployment requires the new INT8 firmware (NAI_PRECISION:INT8). Connected firmware: '+(devicePrecision||'unknown/legacy'));
+  if(precision==='fp32' && devicePrecision==='int8') throw new Error('The connected firmware is INT8-only. Select INT8 or flash FP32 firmware.');
+  const deployPkg=precision==='int8'?state.int8Pkg:state.pkg;
+  if(!deployPkg) throw new Error('Train a model for '+precision+' before deploying.');
+  $('deployBtn').disabled=true;$('trainingModeBtn').disabled=true;$('inferenceModeBtn').disabled=true;const chunk=Number($('chunkSize').value);await window.noodleBLE.deployPackage(deployPkg.files,{chunkSize:chunk,onProgress:p=>{const prog=$('deployProgress');prog.max=Math.max(1,p.total);prog.value=p.sent;const percent=p.total?Math.round(100*p.sent/p.total):0;const msg={begin:'Starting transactional deployment…','file-begin':`Preparing ${p.file}…`,sending:`${p.file}: ${percent}% total`,commit:'Files verified; validating Noodle model…',done:'MODEL_OK — model activated and ready.',error:`Deployment failed: ${p.error||'unknown error'}`}[p.stage]||p.stage;$('deployText').textContent=msg;}});log(`Deployment complete: MODEL_OK (${precision}).`);}catch(e){alert(e.message);log(`Deployment ERROR: ${e.message}`);}finally{$('deployBtn').disabled=!(window.noodleBLE.connected&&state.pkg);$('trainingModeBtn').disabled=!window.noodleBLE.connected;$('inferenceModeBtn').disabled=!window.noodleBLE.connected;}});
 $('trainingModeBtn').addEventListener('click',async()=>{try{await window.noodleBLE.setTraining();}catch(e){alert(e.message);}});$('inferenceModeBtn').addEventListener('click',async()=>{try{await window.noodleBLE.setInference();}catch(e){alert(e.message);}});
 
 $('connectBtn').addEventListener('click',async()=>{try{if(window.noodleBLE.connected)await window.noodleBLE.disconnect();else await window.noodleBLE.connect();}catch(e){alert(e.message);log(`BLE ERROR: ${e.message}`);}});

@@ -168,7 +168,8 @@
             <label>Epochs<input id="epochs" type="number" min="10" max="5000" value="300"></label>
           </div>
           <div id="topology" class="topology"><span>NETWORK</span>Topology: —</div>
-          <div class="action-row train-action"><button id="trainBtn" class="primary" disabled>Train model</button><span id="trainResult" class="inline-status"></span></div>
+          <div class="action-row train-action"><button id="trainBtn" class="primary" disabled>Train model + evaluate INT8</button><span id="trainResult" class="inline-status"></span></div>
+          <p id="quantResult" class="methodology">Train a model to evaluate INT8 quantization.</p>
           <div class="status-box compact info-box">Mode 1 learns from complete BOOT-delimited gestures. Variable-duration recordings are normalized to the configured point count before the selected representation and scaler are applied.</div>
         </div>
       </section>
@@ -208,8 +209,8 @@
           <div class="deploy-main">
             <div class="panel">
               <div class="section-title"><span class="step">1</span><div><div class="section-kicker">DEPLOYMENT</div><h2>Send the NAI4 model to ESP32-S3-Matrix</h2><p>Upload the trained model over Web Bluetooth. No firmware recompile is needed when only the model changes.</p></div></div>
-              <div class="deploy-controls"><button id="deployBtn" class="primary" disabled>Deploy to ESP32-S3</button><button id="saveModelBtn" class="secondary" disabled>Save .nai</button><label>BLE chunk<select id="chunkSize"><option value="160" selected>160 bytes</option><option value="128">128 bytes</option><option value="64">64 bytes</option><option value="20">20 bytes</option></select></label></div>
-              <div class="progress-wrap"><progress id="deployProgress" max="1" value="0"></progress></div>
+              <div class="deploy-controls"><label>Deploy precision<select id="deployPrecision"><option value="int8" selected>INT8 (packed)</option><option value="fp32">FP32</option></select></label><button id="deployBtn" class="primary" disabled>Deploy to ESP32-S3</button><button id="saveModelBtn" class="secondary" disabled>Save FP32 .nai</button><button id="saveInt8Btn" class="secondary" disabled>Save INT8 .nai (packed)</button><label>BLE chunk<select id="chunkSize"><option value="160" selected>160 bytes</option><option value="128">128 bytes</option><option value="64">64 bytes</option><option value="20">20 bytes</option></select></label></div>
+              <p class="methodology paper-caution">The INT8 deployment uses packed <code>wNN.bin</code> and <code>pNN.bin</code> files and requires the ESP32-S3 INT8 firmware. Select FP32 only with an FP32 firmware. The BLE connection checks firmware precision before deployment.</p><div class="progress-wrap"><progress id="deployProgress" max="1" value="0"></progress></div>
               <div id="deployText" class="status-box compact">No model deployed in this session.</div>
             </div>
 
