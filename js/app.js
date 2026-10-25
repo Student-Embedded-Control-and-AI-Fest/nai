@@ -204,6 +204,36 @@ function renderMetrics(){
     row.forEach((n,j)=>addCell(tr,'td',n,n?(i===j?'confusion-hit':'confusion-error'):''));
     body.appendChild(tr);
   });
+  // A separate, explicitly labeled INT8 validation panel is essential:
+  // the training-curve and FP32 confusion matrix are not quantized results.
+  const quant=report.int8Validation;
+  $('int8MetricsArea').hidden=!quant;
+  if(quant){
+    $('int8ValAccuracy').textContent=pct(quant.accuracy);
+    $('int8ValCount').textContent=`${quant.correct} / ${quant.n} correct`;
+    $('int8Precision').textContent=score(quant.macro.precision);
+    $('int8Recall').textContent=score(quant.macro.recall);
+    $('int8F1').textContent=score(quant.macro.f1);
+    $('int8WeightedF1').textContent=score(quant.weighted.f1);
+    const matches=report.fp32Int8Agreement;
+    $('int8Agreement').textContent=matches?`${matches.matches} / ${matches.n} (${pct(matches.rate)})`:'—';
+    $('int8ClassMetricsBody').innerHTML='';
+    for(const r of quant.perClass){
+      const tr=document.createElement('tr');
+      [r.label,r.support,score(r.precision),score(r.recall),score(r.f1)].forEach((v,i)=>addCell(tr,'td',v,i===0?'class-name':''));
+      $('int8ClassMetricsBody').appendChild(tr);
+    }
+    $('int8ConfusionHead').innerHTML='';
+    const hrow=document.createElement('tr');addCell(hrow,'th','Actual ↓ / Predicted →');
+    quant.labels.forEach(label=>addCell(hrow,'th',label));
+    $('int8ConfusionHead').appendChild(hrow);
+    $('int8ConfusionBody').innerHTML='';
+    quant.matrix.forEach((row,i)=>{
+      const tr=document.createElement('tr');addCell(tr,'th',quant.labels[i]);
+      row.forEach((n,j)=>addCell(tr,'td',n,n?(i===j?'confusion-hit':'confusion-error'):''));
+      $('int8ConfusionBody').appendChild(tr);
+    });
+  }
 }
 
 $('downloadReportBtn').addEventListener('click',async()=>{
@@ -279,9 +309,12 @@ async function trainModel(){
     // never used to derive weight/activation scales or the fixed threshold.
     const int8Pkg=await NAI.exportNai4Int8(model,scaler,ds.labels,ds.N,rep,Xtr,Xva,yva);
     const quantMetrics=window.NoodleMetrics.evaluate(yva,int8Pkg.validationPredictions,ds.labels);
-    const report={train,validation,history:hist,split,
+    const int8ValidationPredictions=split.test.map((datasetIndex,i)=>({datasetIndex,actual:Number(yva[i]),predicted:Number(int8Pkg.validationPredictions[i]),probabilities:Array.from(int8Pkg.validationProbabilities[i])}));
+    const matches=Array.from(va.pred).reduce((n,p,i)=>n+(Number(p)===Number(int8Pkg.validationPredictions[i])?1:0),0);
+    const fp32Int8Agreement={matches,n:yva.length,rate:matches/yva.length};
+    const report={train,validation,int8Validation:quantMetrics,fp32Int8Agreement,int8ValidationPredictions,history:hist,split,
       validationPredictions:split.test.map((datasetIndex,i)=>({datasetIndex,actual:Number(yva[i]),predicted:Number(va.pred[i]),probabilities:Array.from(va.probs[i])})),
-      metadata:{createdUtc:new Date().toISOString(),model_format:'NAI4 FP32',architecture:pkg.dims,
+      metadata:{createdUtc:new Date().toISOString(),model_format:'NAI4 FP32 + NAI4 packed INT8',architecture:pkg.dims,
         representation:rep,representation_label:REP_LABEL[rep],normalizedLength:ds.N,sampleRateHz:ds.sampleRate,
         labels:[...ds.labels],targets:Array.from(ds.y),hiddenLayers:hidden,epochs,
         optimizer:'Adam',learningRate:0.001,batchSize:Math.min(200,split.train.length),seed:42,
@@ -293,7 +326,7 @@ async function trainModel(){
     $('trainResult').textContent=`Train ${pct(train.accuracy)} · validation ${pct(validation.accuracy)} · macro F1 ${score(validation.macro.f1)} · NAI4 ${(pkg.total/1024).toFixed(1)} KiB`;
     $('curveSummary').textContent=`Final epoch ${epochs} · ${REP_LABEL[rep]} · ${train.n} train / ${validation.n} validation samples · seed 42`;
     $('saveModelBtn').disabled=false;$('saveInt8Btn').disabled=false;$('deployBtn').disabled=!window.noodleBLE.connected;
-    $('quantResult').textContent=`PTQ INT8 validation: accuracy ${pct(quantMetrics.accuracy)}, macro F1 ${score(quantMetrics.macro.f1)} · FP32 accuracy ${pct(validation.accuracy)} · INT8 raw ${(int8Pkg.total/1024).toFixed(1)} KiB. INT8 uses packed wNN + pNN metadata. Deploy only to INT8 firmware.`;
+    $('quantResult').textContent=`PTQ INT8 validation: accuracy ${pct(quantMetrics.accuracy)}, macro F1 ${score(quantMetrics.macro.f1)} · agreement with FP32 ${pct(fp32Int8Agreement.rate)} · INT8 raw ${(int8Pkg.total/1024).toFixed(1)} KiB. Separate FP32 and INT8 confusion matrices are on the Metrics tab. Deploy only to INT8 firmware.`;
     drawTrainingCurves(hist);renderMetrics();
     log(`Training complete: ${REP_LABEL[rep]}, topology ${pkg.dims.join('→')}, validation accuracy=${pct(validation.accuracy)}, precision=${score(validation.macro.precision)}, recall=${score(validation.macro.recall)}, macro F1=${score(validation.macro.f1)}.`);
     switchTab('curves');

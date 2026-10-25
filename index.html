@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#09111f">
   <meta name="description" content="NoodleAI Studio Mode 1 for ESP32-S3-Matrix: capture BOOT-delimited QMI8658 gestures, train locally, deploy NAI4 models, and run Noodle inference on-device.">
   <title>NoodleAI Studio · Mode 1</title>
-  <link rel="stylesheet" href="style.css?v=mode1-metrics-v1">
+  <link rel="stylesheet" href="style.css?v=mode1-dual-precision-v2">
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 </head>
@@ -185,7 +185,7 @@
             <div class="chart-card"><div class="chart-title"><div><strong>Accuracy vs. epoch</strong><small>Sample-level correctness</small></div><span>train / validation</span></div><canvas id="accuracyCanvas" width="1100" height="280"></canvas><div class="plot-numbers" id="accuracyNumbers">Final accuracies —</div></div>
           </div>
           <div id="metricsArea" class="results-area" hidden>
-            <div class="results-title"><h3>Final epoch · validation performance</h3><p>Stratified holdout from captured gestures. Scores are calculated from predictions, not approximated from the training graph.</p></div>
+            <div class="results-title"><h3>FP32 · final-epoch validation performance</h3><p>Stratified holdout from captured gestures. Scores are calculated from predictions, not approximated from the training graph.</p></div>
             <div class="metrics-grid" aria-label="Classification summary">
               <div class="metric-card"><span>Training accuracy</span><strong id="metricTrainAccuracy">—</strong><small id="metricTrainCount">—</small></div>
               <div class="metric-card emphasized"><span>Validation accuracy</span><strong id="metricValAccuracy">—</strong><small id="metricValCount">—</small></div>
@@ -196,8 +196,24 @@
             </div>
             <p class="methodology" id="methodologyNote"></p>
             <div class="results-tables">
-              <div class="results-table-card"><h3>Validation metrics by gesture class</h3><div class="table-scroll"><table class="report-table"><thead><tr><th>Class</th><th>Samples</th><th>Precision</th><th>Recall</th><th>F1</th></tr></thead><tbody id="classMetricsBody"></tbody></table></div></div>
-              <div class="results-table-card"><h3>Validation confusion matrix</h3><p class="table-caption">Rows: actual gesture · columns: predicted gesture</p><div class="table-scroll"><table class="report-table confusion-table"><thead id="confusionHead"></thead><tbody id="confusionBody"></tbody></table></div></div>
+              <div class="results-table-card"><h3>FP32 validation metrics by gesture class</h3><div class="table-scroll"><table class="report-table"><thead><tr><th>Class</th><th>Samples</th><th>Precision</th><th>Recall</th><th>F1</th></tr></thead><tbody id="classMetricsBody"></tbody></table></div></div>
+              <div class="results-table-card"><h3>FP32 validation confusion matrix</h3><p class="table-caption">Rows: actual gesture · columns: predicted gesture</p><div class="table-scroll"><table class="report-table confusion-table"><thead id="confusionHead"></thead><tbody id="confusionBody"></tbody></table></div></div>
+            </div>
+            <div id="int8MetricsArea" hidden>
+              <div class="results-title"><h3>INT8 · post-training quantized validation</h3><p>Quantized predictions from the packed-INT8 Noodle-compatible JavaScript evaluator, using the same held-out gestures as FP32. INT8 calibration uses training inputs only.</p></div>
+              <div class="metrics-grid" aria-label="INT8 classification summary">
+                <div class="metric-card emphasized"><span>INT8 validation accuracy</span><strong id="int8ValAccuracy">—</strong><small id="int8ValCount">—</small></div>
+                <div class="metric-card"><span>INT8 macro precision</span><strong id="int8Precision">—</strong><small>Validation</small></div>
+                <div class="metric-card"><span>INT8 macro recall</span><strong id="int8Recall">—</strong><small>Validation</small></div>
+                <div class="metric-card"><span>INT8 macro F1-score</span><strong id="int8F1">—</strong><small>Validation</small></div>
+                <div class="metric-card"><span>INT8 weighted F1-score</span><strong id="int8WeightedF1">—</strong><small>Validation</small></div>
+                <div class="metric-card"><span>FP32/INT8 class agreement</span><strong id="int8Agreement">—</strong><small>Same held-out samples</small></div>
+              </div>
+              <div class="results-tables">
+                <div class="results-table-card"><h3>INT8 validation metrics by gesture class</h3><div class="table-scroll"><table class="report-table"><thead><tr><th>Class</th><th>Samples</th><th>Precision</th><th>Recall</th><th>F1</th></tr></thead><tbody id="int8ClassMetricsBody"></tbody></table></div></div>
+                <div class="results-table-card"><h3>INT8 validation confusion matrix</h3><p class="table-caption">Rows: actual gesture · columns: predicted gesture</p><div class="table-scroll"><table class="report-table confusion-table"><thead id="int8ConfusionHead"></thead><tbody id="int8ConfusionBody"></tbody></table></div></div>
+              </div>
+              <p class="methodology">INT8 scores above are browser-side quantized predictions. They are not an independent on-device accuracy test.</p>
             </div>
             <p class="methodology paper-caution">For publication: this is a single held-out validation partition, not an external test set. Repeated trials on this split are not independent evidence of generalization; use a separate test set or subject-wise evaluation for final claims.</p>
           </div>
@@ -248,7 +264,7 @@
 
   <script src="js/core.js?v=mode1-studio"></script>
   <script src="js/ble.js?v=mode1-studio"></script>
-  <script src="js/metrics.js?v=mode1-metrics-v1"></script>
-  <script src="js/app.js?v=mode1-metrics-v1"></script>
+  <script src="js/metrics.js?v=mode1-dual-precision-v2"></script>
+  <script src="js/app.js?v=mode1-dual-precision-v2"></script>
 </body>
 </html>

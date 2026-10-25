@@ -12,3 +12,7 @@ The browser deploy selector defaults to INT8, but deployment is refused unless t
 The browser's binary output uses Noodle's 1/256-step sigmoid LUT. In multiclass prediction it uses the Noodle-compatible INT8 softmax approximation. The new release includes direct host integration tests against the **actual Noodle INT8 FCN implementation** using the supplied reference source.
 
 **Hardware status:** FP32 emlearn benchmarking is unaffected; ESP32-S3 INT8 firmware build/flash and over-the-air BLE deployment need verification on the physical board.
+
+## Paper metrics (FP32 and INT8)
+
+The Metrics tab now contains **two separately labelled validation panels** (FP32 final epoch and post-training INT8), with per-class metrics and confusion matrices for both. The *Export paper report (.zip)* action includes `per_class_int8_validation.csv`, `confusion_matrix_int8_validation.csv`, `validation_predictions_int8.csv`, and `fp32_int8_comparison.csv`. The FP32/INT8 class agreement is measured on identical held-out gestures. The INT8 scores use the JavaScript quantized inference simulator, not device-ground-truth evaluation. Existing datasets can be reloaded and retrained, but the original FP32 paper results ZIP is not sufficient to retroactively reconstruct INT8 results.

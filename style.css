@@ -49,6 +49,7 @@ footer{display:flex;justify-content:space-between;gap:14px;color:#5e6d81;font-si
 .results-area[hidden]{display:none}
 .plot-numbers{display:flex;flex-wrap:wrap;gap:16px;margin:9px 4px 2px;font-size:.78rem;font-weight:720;color:#45566f;font-variant-numeric:tabular-nums}
 .results-area{margin-top:21px}
+#int8MetricsArea:not([hidden]){margin-top:28px;padding-top:24px;border-top:2px solid #dbe3f1}
 .results-title h3,.results-table-card h3{margin:0;color:#263347;font-size:1rem}
 .results-title p,.table-caption{color:#788495;font-size:.78rem;margin:5px 0 12px}
 .metrics-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:9px;margin-top:12px}

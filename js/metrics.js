@@ -90,9 +90,20 @@
     ...['macro','weighted','micro'].flatMap(avg=>['precision','recall','f1'].map(metric=>[split,`${avg}_${metric}`,f(metrics[avg][metric])]))
   ];}
   function buildReportFiles(report){
-    const {train,validation,history,metadata,split,validationPredictions}=report;
+    const {train,validation,int8Validation,fp32Int8Agreement,int8ValidationPredictions,history,metadata,split,validationPredictions}=report;
+    const paired=int8Validation&&int8ValidationPredictions&&fp32Int8Agreement;
+    const int8Files=paired?{
+      'per_class_int8_validation.csv':perClassCsv(int8Validation),
+      'confusion_matrix_int8_validation.csv':confusionCsv(int8Validation),
+      'validation_predictions_int8.csv':csv([['dataset_index','actual_index','actual_class','predicted_index','predicted_class','correct',...metadata.labels.map((_,i)=>`prob_class_${i}`)],
+        ...int8ValidationPredictions.map(p=>[p.datasetIndex,p.actual,metadata.labels[p.actual],p.predicted,metadata.labels[p.predicted],p.actual===p.predicted?1:0,...p.probabilities.map(f)])]),
+      'fp32_int8_comparison.csv':csv([['dataset_index','actual_index','fp32_predicted_index','int8_predicted_index','agree','fp32_correct','int8_correct'],
+        ...validationPredictions.map((p,i)=>[p.datasetIndex,p.actual,p.predicted,int8ValidationPredictions[i].predicted,p.predicted===int8ValidationPredictions[i].predicted?1:0,p.actual===p.predicted?1:0,p.actual===int8ValidationPredictions[i].predicted?1:0])]),
+    }:{};
     return {
-      'metrics_summary.csv':csv([['split','metric','value'],...summaryRows('train',train),...summaryRows('validation',validation)]),
+      'metrics_summary.csv':csv([['split','metric','value'],...summaryRows('train',train),...summaryRows('validation',validation),
+        ...(paired?[...summaryRows('validation_int8',int8Validation),['comparison_fp32_int8','class_agreement',f(fp32Int8Agreement.rate)],['comparison_fp32_int8','class_agreement_count',fp32Int8Agreement.matches]]:[])]),
+      ...int8Files,
       'per_class_validation.csv':perClassCsv(validation),
       'per_class_train.csv':perClassCsv(train),
       'confusion_matrix_validation.csv':confusionCsv(validation),
@@ -107,7 +118,9 @@
       'run_metadata.json':JSON.stringify({...metadata,targets:undefined},null,2)+'\n',
       'README.txt':[
         'NoodleAI gesture classification report',
-        'Metrics computed from TensorFlow.js predictions after the final epoch.',
+        'FP32 metrics computed from TensorFlow.js predictions after the final epoch.',
+        'INT8 metrics, when included, come from post-training quantized Noodle-compatible JS prediction on the same validation samples.',
+        'PTQ calibration uses only training-partition inputs. This is browser-side INT8 validation, not device-measured accuracy.',
         'Validation is a stratified holdout from the captured gesture dataset, NOT an independent test set.',
         'Scaler is fitted only on training samples. Split seed: 42.',
         'Accuracy = correct predictions / total.',
