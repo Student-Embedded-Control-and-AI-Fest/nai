@@ -441,7 +441,11 @@ class ServerCallbacks : public BLEServerCallbacks {
         bleConnected = true;
         const char *s = model.loaded() ? "CONNECTED:M" : "CONNECTED:N";
         Serial.println(s);
-        if (statusCharacteristic) statusCharacteristic->setValue(s);
+#if defined(NOODLE_USE_INT8)
+        if (statusCharacteristic) statusCharacteristic->setValue("NAI_PRECISION:INT8");
+#else
+        if (statusCharacteristic) statusCharacteristic->setValue("NAI_PRECISION:FP32");
+#endif
     }
     void onDisconnect(BLEServer *server) override {
         bleConnected = false;
@@ -580,7 +584,11 @@ static void initBle() {
     statusCharacteristic = service->createCharacteristic(
         STATUS_UUID, BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
     statusCharacteristic->addDescriptor(new BLE2902());
-    statusCharacteristic->setValue("BOOT");
+#if defined(NOODLE_USE_INT8)
+    statusCharacteristic->setValue("NAI_PRECISION:INT8");
+#else
+    statusCharacteristic->setValue("NAI_PRECISION:FP32");
+#endif
 
     service->start();
     BLEAdvertising *advertising = BLEDevice::getAdvertising();
@@ -972,6 +980,17 @@ static void runGestureInference(uint16_t rawSamples, uint32_t durationMs) {
         return;
     }
 
+#if defined(NAI_BENCH_FCN) && NAI_BENCH_FCN
+    // Printing is deliberately outside inferStartUs..inferUs so that the
+    // PRED inference time excludes diagnostic serial output overhead.
+    Serial.printf("NAI_FCN backend=%s fcn_us=%lu\n",
+#if defined(SRAM_BACKEND) && SRAM_BACKEND
+                  "SRAM",
+#else
+                  "FFAT",
+#endif
+                  static_cast<unsigned long>(model.lastFcnUs()));
+#endif
     const String &name = model.label(cls);
     Serial.printf("PRED class=%u label=%s confidence=%.4f inference=%.3f ms raw=%u duration=%lu ms rep=%s\n",
                   (unsigned)cls, name.c_str(), confidence,
