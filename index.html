@@ -163,10 +163,12 @@
           </div>
 
           <div class="form-grid train-grid">
-            <label>Input representation<select id="representation"><option value="accel">Accelerometer</option><option value="gyro">Gyroscope</option><option value="accel+gyro">Accel + Gyro</option><option value="quaternion">Relative Quaternion</option><option value="velocity">Estimated Velocity</option><option value="velocity+quaternion">Velocity + Quaternion</option></select></label>
+            <label>Input representation<select id="representation"><option value="accel">Accelerometer</option><option value="accel+mag">Accel + magnitude (Ax, Ay, Az, |a|)</option><option value="gyro">Gyroscope</option><option value="accel+gyro">Accel + Gyro</option><option value="quaternion">Relative Quaternion</option><option value="velocity">Estimated Velocity</option><option value="velocity+quaternion">Velocity + Quaternion</option></select></label>
             <label>Hidden layers<input id="hiddenLayers" value="32,16" placeholder="32,16"></label>
             <label>Epochs<input id="epochs" type="number" min="10" max="5000" value="300"></label>
           </div>
+          <label class="methodology" style="display:block;margin:10px 0"><input type="checkbox" id="directHplp" checked> Use HPF (0.10 Hz) → LPF (8 Hz) on raw direct-IMU samples before resampling</label>
+          <p id="directHplpHint" class="methodology">Checked: HPF→LPF; unchecked: existing per-gesture centering.</p>
           <div id="topology" class="topology"><span>NETWORK</span>Topology: —</div>
           <div class="action-row train-action"><button id="trainBtn" class="primary" disabled>Train model + evaluate INT8</button><span id="trainResult" class="inline-status"></span></div>
           <p id="quantResult" class="methodology">Train a model to evaluate INT8 quantization.</p>
@@ -262,9 +264,9 @@
     </footer>
   </div>
 
-  <script src="js/core.js?v=mode1-studio"></script>
+  <script src="js/core.js?v=mode1-hplp-mag-v1"></script>
   <script src="js/ble.js?v=mode1-studio"></script>
   <script src="js/metrics.js?v=mode1-dual-precision-v2"></script>
-  <script src="js/app.js?v=mode1-dual-precision-v2"></script>
+  <script src="js/app.js?v=mode1-hplp-mag-v1"></script>
 </body>
 </html>

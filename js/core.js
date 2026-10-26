@@ -6,6 +6,7 @@ const GRAVITY_MPS2 = 9.80665;
 const MAX_PACKAGE_BYTES = 550 * 1024;
 const FLAG_BINARY_CLASSIFIER = 0x0001;
 const FLAG_INT8 = 0x0002;
+const FLAG_DIRECT_HPLP = 0x0004;
 const QCFG_MAGIC = 'Q8M1';
 
 const REP = {
@@ -15,6 +16,7 @@ const REP = {
   'quaternion': { code: 4, channels: 4 },
   'velocity': { code: 5, channels: 3 },
   'velocity+quaternion': { code: 6, channels: 7 },
+  'accel+mag': { code: 7, channels: 4 },
 };
 const CODE_TO_REP = Object.fromEntries(Object.entries(REP).map(([k,v]) => [v.code, k]));
 // ---------------------------------------------------------------------------
@@ -431,18 +433,51 @@ function normalizeQuatRows(data, rows, offset=0, stride=4) {
   return out;
 }
 
-function buildRepresentationOne(ds, sampleIndex, rep) {
+// Match Mode 1 firmware's HPF -> LPF on RAW samples before temporal resampling.
+// First sample output is zero; state is reset independently for each BOOT gesture.
+function filterRaw6Hplp(raw, T, sampleRate, axes) {
+  if (!Number.isFinite(sampleRate) || sampleRate <= 0) throw new Error('Invalid sensor sample rate');
+  const out = Float32Array.from(raw);
+  const dt = 1/sampleRate;
+  const tauH = 1/(2*Math.PI*0.10), tauL = 1/(2*Math.PI*8.0);
+  const alpha = tauH/(tauH+dt), beta = dt/(tauL+dt);
+  for (const c of axes) {
+    let prevX = out[c], hp = 0, lp = 0;
+    out[c] = 0;
+    for (let t=1;t<T;t++) {
+      const o=t*6+c, x=out[o];
+      hp=Math.fround(alpha*Math.fround(hp+x-prevX));
+      lp=Math.fround(lp+Math.fround(beta*Math.fround(hp-lp)));
+      out[o]=lp;prevX=x;
+    }
+  }
+  return out;
+}
+
+function buildRepresentationOne(ds, sampleIndex, rep, useFilter=false) {
   const N=ds.N;
   if (!REP[rep]) throw new Error(`Unknown representation ${rep}`);
 
   if (ds.rawRows) {
     const rawObj=ds.rawRows[sampleIndex];
     const raw=rawObj.data, T=rawObj.length;
-    if (rep==='accel'||rep==='gyro'||rep==='accel+gyro') {
-      const idx = rep==='accel' ? [0,1,2] : rep==='gyro' ? [3,4,5] : [0,1,2,3,4,5];
+    if (rep==='accel'||rep==='gyro'||rep==='accel+gyro'||rep==='accel+mag') {
+      if (rep==='accel+mag' && !useFilter) throw new Error('Accel + magnitude requires HPF/LPF');
+      const idx = rep==='gyro' ? [3,4,5] : rep==='accel+gyro' ? [0,1,2,3,4,5] : [0,1,2];
+      const filtered = useFilter ? filterRaw6Hplp(raw,T,ds.sampleRate,idx) : raw;
       const selected=new Float32Array(T*idx.length);
-      for (let r=0;r<T;r++) for (let c=0;c<idx.length;c++) selected[r*idx.length+c]=raw[r*6+idx[c]];
-      return centerColumns(resample(selected,T,idx.length,N),N,idx.length);
+      for(let r=0;r<T;r++) for(let c=0;c<idx.length;c++) selected[r*idx.length+c]=filtered[r*6+idx[c]];
+      const xyz=resample(selected,T,idx.length,N);
+      if (rep==='accel+mag') {
+        const out=new Float32Array(N*4);
+        for (let r=0;r<N;r++) {
+          const i=r*3,o=r*4,ax=xyz[i],ay=xyz[i+1],az=xyz[i+2];
+          out[o]=ax;out[o+1]=ay;out[o+2]=az;
+          out[o+3]=Math.fround(Math.sqrt(ax*ax+ay*ay+az*az));
+        }
+        return out;
+      }
+      return useFilter ? xyz : centerColumns(xyz,N,idx.length);
     }
     const d=deriveQuatVelocity(rawObj,ds.sampleRate);
     if (rep==='quaternion') return normalizeQuatRows(resample(d.quat,d.T,4,N),N);
@@ -456,6 +491,7 @@ function buildRepresentationOne(ds, sampleIndex, rep) {
     return normalizeQuatRows(resample(both,d.T,7,N),N,3,7);
   }
 
+  if (useFilter || rep==='accel+mag') throw new Error('HPF/LPF and acceleration magnitude require original raw six-axis samples. Record or load a dataset with raw_data/raw_offsets.');
   // Legacy NAI3 datasets contain the already resampled + per-channel-centered
   // six-axis vector. Raw sensor representations can still be projected exactly.
   if (rep==='quaternion'||rep==='velocity'||rep==='velocity+quaternion') {
@@ -468,8 +504,8 @@ function buildRepresentationOne(ds, sampleIndex, rep) {
   return out;
 }
 
-function buildRepresentationDataset(ds, rep) {
-  return Array.from({length:ds.y.length},(_,i)=>buildRepresentationOne(ds,i,rep));
+function buildRepresentationDataset(ds, rep, useFilter=false) {
+  return Array.from({length:ds.y.length},(_,i)=>buildRepresentationOne(ds,i,rep,useFilter));
 }
 
 
@@ -600,7 +636,7 @@ function readFloat32LE(bytes) {
   return out;
 }
 
-function makeCfg(labels,N,inputDim,dims,rep,binary,quant=null,filter=null) {
+function makeCfg(labels,N,inputDim,dims,rep,binary,quant=null,filter=null,useFilter=false) {
   const enc=new TextEncoder();
   const labelBytes=labels.map(s=>enc.encode(String(s)));
   for(const b of labelBytes)if(!b.length||b.length>31)throw new Error('NAI labels must be 1..31 UTF-8 bytes');
@@ -610,7 +646,7 @@ function makeCfg(labels,N,inputDim,dims,rep,binary,quant=null,filter=null) {
   const out=new Uint8Array(total),dv=new DataView(out.buffer);
   out.set([0x4e,0x41,0x49,0x34],0); // NAI4
   let o=4;
-  const flags=(binary?FLAG_BINARY_CLASSIFIER:0)|(quant?FLAG_INT8:0);
+  const flags=(binary?FLAG_BINARY_CLASSIFIER:0)|(quant?FLAG_INT8:0)|(useFilter?FLAG_DIRECT_HPLP:0);
   const vals=[4,flags,N,SAMPLE_RATE_HZ,dims.length-1,labels.length,inputDim,REP[rep].code];
   vals.forEach(v=>{dv.setUint16(o,v,true);o+=2;});
   dims.forEach(v=>{dv.setUint16(o,v,true);o+=2;});
@@ -835,12 +871,12 @@ function sweepConfidenceThreshold(probs,y,{min=0.30,max=0.90,step=0.01,minCovera
 }
 
 
-async function exportNai4(model,scaler,labels,N,rep) {
+async function exportNai4(model,scaler,labels,N,rep,useFilter=false) {
   const layers=await extractTfWeightsOI(model);
   const dims=[layers[0].I,...layers.map(l=>l.O)];
   const binary=labels.length===2;
   const files={
-    'cfg.bin':makeCfg(labels,N,dims[0],dims,rep,binary),
+    'cfg.bin':makeCfg(labels,N,dims[0],dims,rep,binary,null,null,useFilter),
     'mean.bin':float32LE(scaler.mean),
     'scale.bin':float32LE(scaler.scale),
   };
@@ -893,7 +929,7 @@ function packedMetadataLE(bias, multiplier, shift) {
   return bytes;
 }
 
-async function exportNai4Int8(model,scaler,labels,N,rep,calibrationRows,validationRows,validationY) {
+async function exportNai4Int8(model,scaler,labels,N,rep,calibrationRows,validationRows,validationY,useFilter=false) {
   const floatLayers=await extractTfWeightsOI(model);
   if(floatLayers.length===0 || floatLayers.length>8)throw new Error('Expected 1..8 Dense layers');
   const dims=[floatLayers[0].I,...floatLayers.map(l=>l.O)];
@@ -909,7 +945,7 @@ async function exportNai4Int8(model,scaler,labels,N,rep,calibrationRows,validati
   const quant={strideSamples:0,thresholdMin:0,thresholdMax:1,confidenceThreshold:0.5,
     inputScale:activations[0].scale,inputZeroPoint:activations[0].zeroPoint,
     layers:layers.map(l=>({outputScale:l.outputScale,outputZeroPoint:l.outputZeroPoint}))};
-  const files={'cfg.bin':makeCfg(labels,N,dims[0],dims,rep,binary,quant),
+  const files={'cfg.bin':makeCfg(labels,N,dims[0],dims,rep,binary,quant,null,useFilter),
     'mean.bin':float32LE(scaler.mean),'scale.bin':float32LE(scaler.scale)};
   layers.forEach((l,i)=>{
     const n=String(i).padStart(2,'0');
