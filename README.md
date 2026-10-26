@@ -21,7 +21,7 @@ With only a browser and Bluetooth, you can:
 
 No Python installation is required for the web version, and the gesture data does not need to leave your computer.
 
-> **Try it here:** https://auralius.github.io/nai/
+> **Try it here:** https://github.com/Student-Embedded-Control-and-AI-Fest/nai
 
 ---
 
