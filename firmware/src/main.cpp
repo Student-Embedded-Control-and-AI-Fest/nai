@@ -4,6 +4,7 @@
 #include <Wire.h>
 #include <FFat.h>
 #include <SensorQMI8658.hpp>
+#include "nai_gyro_calibration.h"
 #include <Adafruit_NeoPixel.h>
 
 #include <BLEDevice.h>
@@ -86,6 +87,14 @@ struct ImuPacket {
 static_assert(sizeof(ImuPacket) == 128, "ImuPacket must remain exactly 128 bytes");
 
 SensorQMI8658 qmi;
+
+// These values and the stationarity thresholds intentionally match Mode 2.
+// Acceleration is in g; gyroscope readings are in degrees/second.
+static constexpr uint16_t GYRO_CAL_WARMUP_SAMPLES = 50;
+static constexpr uint16_t GYRO_CAL_SAMPLES = 300;
+static constexpr uint16_t GYRO_CAL_DELAY_MS = 10;
+static float s_gyro_bias_dps[3] = {0.0f, 0.0f, 0.0f};
+static bool s_gyro_calibrated = false;
 Adafruit_NeoPixel pixels(64, PIN_MATRIX, NEO_GRB + NEO_KHZ800);
 NoodleAIModel model;
 
@@ -538,6 +547,42 @@ class ModelCallbacks : public BLECharacteristicCallbacks {
     }
 };
 
+// Acquire the same six-axis, UNCORRECTED units used by Mode 2's
+// NaiGyroCalAccumulator; do not apply an already-measured bias here.
+static bool readRawImu(float s[6]) {
+    if (!s) return false;
+    if (!qmi.getAccelerometer(s[0], s[1], s[2])) return false;
+    return qmi.getGyroscope(s[3], s[4], s[5]);
+}
+
+// Keep the board motionless during initialization (~3.5 seconds).
+// A moving board stays usable, but gyro correction remains disabled.
+// A sensor read error is fatal, matching the existing Mode 2 behavior.
+static bool calibrateGyroZeroRate() {
+    s_gyro_calibrated = false;
+    for (float &v : s_gyro_bias_dps) v = 0.0f;
+
+    float raw[6];
+    for (uint16_t i = 0; i < GYRO_CAL_WARMUP_SAMPLES; ++i) {
+        if (!readRawImu(raw)) return false;
+        delay(GYRO_CAL_DELAY_MS);
+    }
+
+    NaiGyroCalAccumulator stats;
+    for (uint16_t i = 0; i < GYRO_CAL_SAMPLES; ++i) {
+        if (!readRawImu(raw)) return false;
+        stats.add(raw);
+        delay(GYRO_CAL_DELAY_MS);
+    }
+
+    float candidate[3] = {};
+    if (!stats.stationary_bias(candidate)) return true;
+
+    for (uint8_t i = 0; i < 3; ++i) s_gyro_bias_dps[i] = candidate[i];
+    s_gyro_calibrated = true;
+    return true;
+}
+
 static bool initImu() {
     Wire.begin(PIN_IMU_SDA, PIN_IMU_SCL);
     Wire.setClock(400000);
@@ -557,7 +602,9 @@ static bool initImu() {
             SensorQMI8658::LPF_OFF)) return false;
 
     if (!qmi.enableAccelerometer()) return false;
-    return qmi.enableGyroscope();
+    if (!qmi.enableGyroscope()) return false;
+    delay(100); // QMI8658 output settling, as in Mode 2
+    return calibrateGyroZeroRate();
 }
 
 static void initBle() {
@@ -1152,6 +1199,11 @@ void setup() {
         while (true) delay(1000);
     }
     Serial.println("QMI8658 accelerometer + gyroscope OK");
+    Serial.printf("GYRO_CAL:%s\n", s_gyro_calibrated ? "OK" : "UNSTABLE");
+    Serial.printf("GBc:%ld,%ld,%ld\n",
+                  lroundf(s_gyro_bias_dps[0] * 100.0f),
+                  lroundf(s_gyro_bias_dps[1] * 100.0f),
+                  lroundf(s_gyro_bias_dps[2] * 100.0f));
     Serial.printf("Gesture acquisition: %u Hz, BOOT press=start, release=end, raw range=%u..%u samples\n",
                   (unsigned)TRAIN_SAMPLE_RATE_HZ,
                   (unsigned)MIN_GESTURE_SAMPLES,
@@ -1207,7 +1259,16 @@ void loop() {
         float gx = 0.0f, gy = 0.0f, gz = 0.0f;
         const bool accOk = qmi.getAccelerometer(ax, ay, az);
         const bool gyrOk = qmi.getGyroscope(gx, gy, gz);
-        if (accOk && gyrOk) processImuSample(ax, ay, az, gx, gy, gz, now);
+        if (accOk && gyrOk) {
+            // Correct before BOTH BLE training acquisition and inference.
+            // This includes the gyro inputs used for Madgwick orientation.
+            if (s_gyro_calibrated) {
+                gx -= s_gyro_bias_dps[0];
+                gy -= s_gyro_bias_dps[1];
+                gz -= s_gyro_bias_dps[2];
+            }
+            processImuSample(ax, ay, az, gx, gy, gz, now);
+        }
     }
     delay(1);
 }
