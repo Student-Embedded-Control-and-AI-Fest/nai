@@ -33,6 +33,7 @@ public:
         REP_QUATERNION = 4,
         REP_VELOCITY = 5,
         REP_VELOCITY_QUATERNION = 6,
+        REP_ACCEL_MAG = 7, // ax ay az magnitude (filtered)
 
         // NAI3 source-compatibility aliases.
         SENSOR_ACCEL = REP_ACCEL,
@@ -67,6 +68,7 @@ public:
     uint16_t layerCount() const { return _nLayers; }
 
     InputRepresentation representation() const { return _representation; }
+    bool directHplp() const { return _directHplp; }
     uint16_t channelCount() const;
     const char *representationName() const;
 
@@ -126,6 +128,7 @@ private:
     char _slot = 0;
 
     InputRepresentation _representation = REP_ACCEL;
+    bool _directHplp = false;
     uint16_t _windowLength = 0;
     uint16_t _sampleRateHz = 0;
     uint16_t _nLayers = 0;
