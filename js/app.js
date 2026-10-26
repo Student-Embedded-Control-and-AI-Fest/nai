@@ -37,7 +37,7 @@ function parseHidden(){const h=$('hiddenLayers').value.split(',').map(s=>s.trim(
 
 function selectedRep(){return $('representation').value;}
 function selectedDirectHplp(){return ['accel','gyro','accel+gyro','accel+mag'].includes(selectedRep()) && ($('directHplp').checked || selectedRep()==='accel+mag');}
-function refreshFilterControl(){const rep=selectedRep(),cb=$('directHplp');if(rep==='accel+mag'){cb.checked=true;cb.disabled=true;}else{cb.disabled=!['accel','gyro','accel+gyro'].includes(rep);}$('directHplpHint').textContent = rep==='accel+mag'?'Required for acceleration magnitude models.':cb.disabled?'Derived features use their existing gravity-preserving preprocessing.':'Checked: HPF→LPF on raw 50-Hz samples; no per-gesture centering. Unchecked: legacy centering.';}
+function refreshFilterControl(){const rep=selectedRep(),cb=$('directHplp');if(rep==='accel+mag'){cb.checked=true;cb.disabled=true;}else{cb.disabled=!['accel','gyro','accel+gyro'].includes(rep);}$('directHplpHint').textContent = rep==='accel+mag'?'Required for acceleration magnitude models.':cb.disabled?'Derived features use their existing gravity-preserving preprocessing.':'Checked: HPF→LPF on raw 50-Hz samples; no per-gesture centering. Unchecked: with per-gesture centering.';}
 function updateInputAndTopology(){
   refreshFilterControl();
   state.N=Math.max(5,Math.min(500,Number($('normalizedLength').value)||100));
