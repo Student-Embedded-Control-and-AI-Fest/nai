@@ -6,7 +6,7 @@ const GRAVITY_MPS2 = 9.80665;
 const MAX_PACKAGE_BYTES = 550 * 1024;
 const FLAG_BINARY_CLASSIFIER = 0x0001;
 const FLAG_INT8 = 0x0002;
-const FLAG_DIRECT_HPLP = 0x0004;
+const FLAG_LPF5 = 0x0008; // Required for all new NAI4 models: 5 Hz LPF before resampling.
 const QCFG_MAGIC = 'Q8M1';
 
 const REP = {
@@ -16,8 +16,7 @@ const REP = {
   'quaternion': { code: 4, channels: 4 },
   'velocity': { code: 5, channels: 3 },
   'velocity+quaternion': { code: 6, channels: 7 },
-  'accel+mag': { code: 7, channels: 4 }, // legacy: filtered acceleration + magnitude
-  'accel-dir+mag': { code: 8, channels: 4 }, // unit direction + filtered magnitude
+  'accel-dir+mag': { code: 9, channels: 4 }, // unit direction + LPF acceleration magnitude
 };
 const CODE_TO_REP = Object.fromEntries(Object.entries(REP).map(([k,v]) => [v.code, k]));
 // Acceleration in g. Directions below this magnitude are set to zero, not amplified.
@@ -436,88 +435,65 @@ function normalizeQuatRows(data, rows, offset=0, stride=4) {
   return out;
 }
 
-// Match Mode 1 firmware's HPF -> LPF on RAW samples before temporal resampling.
-// First sample output is zero; state is reset independently for each BOOT gesture.
-function filterRaw6Hplp(raw, T, sampleRate, axes) {
+// First-order LPF, 5 Hz, applied independently to each requested raw IMU axis.
+// Per-gesture reset: LP[0] = raw[0], so a stationary accelerometer preserves 1 g.
+function filterRaw6Lpf5(raw, T, sampleRate, axes=[0,1,2,3,4,5]) {
   if (!Number.isFinite(sampleRate) || sampleRate <= 0) throw new Error('Invalid sensor sample rate');
-  const out = Float32Array.from(raw);
-  const dt = 1/sampleRate;
-  const tauH = 1/(2*Math.PI*0.10), tauL = 1/(2*Math.PI*8.0);
-  const alpha = tauH/(tauH+dt), beta = dt/(tauL+dt);
+  const out=Float32Array.from(raw);
+  const dt=1/sampleRate, tau=1/(2*Math.PI*5.0);
+  const beta=Math.fround(dt/(tau+dt));
   for (const c of axes) {
-    let prevX = out[c], hp = 0, lp = 0;
-    out[c] = 0;
+    let lp=out[c];
     for (let t=1;t<T;t++) {
-      const o=t*6+c, x=out[o];
-      hp=Math.fround(alpha*Math.fround(hp+x-prevX));
-      lp=Math.fround(lp+Math.fround(beta*Math.fround(hp-lp)));
-      out[o]=lp;prevX=x;
+      const o=t*6+c;
+      const x=out[o];
+      lp=Math.fround(lp+Math.fround(beta*Math.fround(x-lp)));
+      out[o]=lp;
     }
   }
   return out;
 }
 
-function buildRepresentationOne(ds, sampleIndex, rep, useFilter=false) {
+function buildRepresentationOne(ds, sampleIndex, rep) {
   const N=ds.N;
   if (!REP[rep]) throw new Error(`Unknown representation ${rep}`);
-
-  if (ds.rawRows) {
-    const rawObj=ds.rawRows[sampleIndex];
-    const raw=rawObj.data, T=rawObj.length;
-    if (rep==='accel'||rep==='gyro'||rep==='accel+gyro'||rep==='accel+mag'||rep==='accel-dir+mag') {
-      if ((rep==='accel+mag'||rep==='accel-dir+mag') && !useFilter) throw new Error('Accel + magnitude requires HPF/LPF');
-      const idx = rep==='gyro' ? [3,4,5] : rep==='accel+gyro' ? [0,1,2,3,4,5] : [0,1,2];
-      const filtered = useFilter ? filterRaw6Hplp(raw,T,ds.sampleRate,idx) : raw;
-      const selected=new Float32Array(T*idx.length);
-      for(let r=0;r<T;r++) for(let c=0;c<idx.length;c++) selected[r*idx.length+c]=filtered[r*6+idx[c]];
-      const xyz=resample(selected,T,idx.length,N);
-      if (rep==='accel+mag'||rep==='accel-dir+mag') {
-        const out=new Float32Array(N*4);
-        for (let r=0;r<N;r++) {
-          const i=r*3,o=r*4,ax=xyz[i],ay=xyz[i+1],az=xyz[i+2];
-          const m=Math.fround(Math.sqrt(ax*ax+ay*ay+az*az));
-          if (rep==='accel-dir+mag') {
-            // A filtered gesture can contain zero/near-zero acceleration.
-            // Preserve measured magnitude; suppress unstable unit directions.
-            const inv=(Number.isFinite(m)&&m>ACCEL_DIRECTION_EPS_G)?1/m:0;
-            out[o]=Math.fround(ax*inv);out[o+1]=Math.fround(ay*inv);out[o+2]=Math.fround(az*inv);
-            out[o+3]=Number.isFinite(m)?m:0;
-          } else {
-            // Backward-compatible representation ID 7: unnormalized XYZ + |a|.
-            out[o]=ax;out[o+1]=ay;out[o+2]=az;out[o+3]=m;
-          }
-        }
-        return out;
+  // LPF5 requires raw, non-resampled IMU data. Resampling happens afterward.
+  if (!ds.rawRows) throw new Error('LPF5 requires original raw six-axis samples (raw_data/raw_offsets). Record new gestures or load a raw NAI4 dataset.');
+  const rawObj=ds.rawRows[sampleIndex];
+  const T=rawObj.length;
+  const idx=rep==='gyro'?[3,4,5]:rep==='accel+gyro'?[0,1,2,3,4,5]:[0,1,2];
+  const filtered=filterRaw6Lpf5(rawObj.data,T,ds.sampleRate,rep==='quaternion'||rep==='velocity'||rep==='velocity+quaternion'?[0,1,2,3,4,5]:idx);
+  if (rep==='accel'||rep==='gyro'||rep==='accel+gyro'||rep==='accel-dir+mag') {
+    const selected=new Float32Array(T*idx.length);
+    for(let r=0;r<T;r++)for(let c=0;c<idx.length;c++)selected[r*idx.length+c]=filtered[r*6+idx[c]];
+    const xyz=resample(selected,T,idx.length,N);
+    if(rep==='accel-dir+mag') {
+      const out=new Float32Array(N*4);
+      for(let r=0;r<N;r++) {
+        const i=r*3,o=r*4,ax=xyz[i],ay=xyz[i+1],az=xyz[i+2];
+        const m=Math.fround(Math.sqrt(ax*ax+ay*ay+az*az));
+        const inv=(Number.isFinite(m)&&m>ACCEL_DIRECTION_EPS_G)?1/m:0;
+        out[o]=Math.fround(ax*inv);out[o+1]=Math.fround(ay*inv);out[o+2]=Math.fround(az*inv);
+        out[o+3]=Number.isFinite(m)?m:0;
       }
-      return useFilter ? xyz : centerColumns(xyz,N,idx.length);
+      return out; // Do not center: preserve direction and approximately 1 g at rest.
     }
-    const d=deriveQuatVelocity(rawObj,ds.sampleRate);
-    if (rep==='quaternion') return normalizeQuatRows(resample(d.quat,d.T,4,N),N);
-    if (rep==='velocity') return resample(d.vel,d.T,3,N);
-    const both=new Float32Array(d.T*7);
-    for (let r=0;r<d.T;r++) {
-      both[r*7]=d.vel[r*3]; both[r*7+1]=d.vel[r*3+1]; both[r*7+2]=d.vel[r*3+2];
-      both[r*7+3]=d.quat[r*4]; both[r*7+4]=d.quat[r*4+1];
-      both[r*7+5]=d.quat[r*4+2]; both[r*7+6]=d.quat[r*4+3];
-    }
-    return normalizeQuatRows(resample(both,d.T,7,N),N,3,7);
+    return centerColumns(xyz,N,idx.length); // Center each direct IMU axis per gesture.
   }
-
-  if (useFilter || rep==='accel+mag' || rep==='accel-dir+mag') throw new Error('HPF/LPF and acceleration magnitude require original raw six-axis samples. Record or load a dataset with raw_data/raw_offsets.');
-  // Legacy NAI3 datasets contain the already resampled + per-channel-centered
-  // six-axis vector. Raw sensor representations can still be projected exactly.
-  if (rep==='quaternion'||rep==='velocity'||rep==='velocity+quaternion') {
-    throw new Error('This dataset has no raw_data/raw_offsets. Derived quaternion/velocity representations require a fresh NAI4 raw dataset.');
+  const d=deriveQuatVelocity({data:filtered,length:T},ds.sampleRate);
+  if(rep==='quaternion')return normalizeQuatRows(resample(d.quat,d.T,4,N),N);
+  if(rep==='velocity')return resample(d.vel,d.T,3,N);
+  const both=new Float32Array(T*7);
+  for(let r=0;r<T;r++){
+    both[r*7]=d.vel[r*3];both[r*7+1]=d.vel[r*3+1];both[r*7+2]=d.vel[r*3+2];
+    both[r*7+3]=d.quat[r*4];both[r*7+4]=d.quat[r*4+1];
+    both[r*7+5]=d.quat[r*4+2];both[r*7+6]=d.quat[r*4+3];
   }
-  const src=ds.Xrows[sampleIndex];
-  const idx = rep==='accel' ? [0,1,2] : rep==='gyro' ? [3,4,5] : [0,1,2,3,4,5];
-  const out=new Float32Array(N*idx.length);
-  for (let r=0;r<N;r++) for (let c=0;c<idx.length;c++) out[r*idx.length+c]=src[r*6+idx[c]];
-  return out;
+  return normalizeQuatRows(resample(both,d.T,7,N),N,3,7);
 }
 
-function buildRepresentationDataset(ds, rep, useFilter=false) {
-  return Array.from({length:ds.y.length},(_,i)=>buildRepresentationOne(ds,i,rep,useFilter));
+function buildRepresentationDataset(ds, rep) {
+  return Array.from({length:ds.y.length},(_,i)=>buildRepresentationOne(ds,i,rep));
 }
 
 
@@ -549,8 +525,8 @@ function fitScaler(rows, trainIdx) {
   return {mean,scale};
 }
 
-// Preserve unit XYZ direction at the actual FCN input for NAI4 rep 8.
-// Only channel 3 (filtered magnitude in g) is standardized; legacy reps unchanged.
+// Preserve unit XYZ direction at the actual FCN input for NAI4 rep 9.
+// Only magnitude channel is standardized. Direction remains a unit vector.
 function configureRepresentationScaler(scaler, rep, N) {
   if (rep==='accel-dir+mag') {
     if (scaler.mean.length!==N*4 || scaler.scale.length!==N*4) {
@@ -663,17 +639,16 @@ function readFloat32LE(bytes) {
   return out;
 }
 
-function makeCfg(labels,N,inputDim,dims,rep,binary,quant=null,filter=null,useFilter=false) {
+function makeCfg(labels,N,inputDim,dims,rep,binary,quant=null) {
   const enc=new TextEncoder();
   const labelBytes=labels.map(s=>enc.encode(String(s)));
   for(const b of labelBytes)if(!b.length||b.length>31)throw new Error('NAI labels must be 1..31 UTF-8 bytes');
   const quantBytes=quant ? (28 + 8*(dims.length-1)) : 0;
-  const filterBytes=filter ? 16 : 0;
-  const total=20 + 2*dims.length + labelBytes.reduce((s,b)=>s+1+b.length,0) + quantBytes + filterBytes;
+  const total=20 + 2*dims.length + labelBytes.reduce((s,b)=>s+1+b.length,0) + quantBytes;
   const out=new Uint8Array(total),dv=new DataView(out.buffer);
   out.set([0x4e,0x41,0x49,0x34],0); // NAI4
   let o=4;
-  const flags=(binary?FLAG_BINARY_CLASSIFIER:0)|(quant?FLAG_INT8:0)|(useFilter?FLAG_DIRECT_HPLP:0);
+  const flags=(binary?FLAG_BINARY_CLASSIFIER:0)|(quant?FLAG_INT8:0)|FLAG_LPF5;
   const vals=[4,flags,N,SAMPLE_RATE_HZ,dims.length-1,labels.length,inputDim,REP[rep].code];
   vals.forEach(v=>{dv.setUint16(o,v,true);o+=2;});
   dims.forEach(v=>{dv.setUint16(o,v,true);o+=2;});
@@ -691,13 +666,6 @@ function makeCfg(labels,N,inputDim,dims,rep,binary,quant=null,filter=null,useFil
       dv.setFloat32(o,q.outputScale,true);o+=4;
       dv.setInt32(o,q.outputZeroPoint,true);o+=4;
     });
-  }
-  if(filter){
-    out.set(new TextEncoder().encode(FILTER_MAGIC),o);o+=4;
-    dv.setUint16(o,filter.flags,true);o+=2;
-    dv.setUint16(o,0,true);o+=2;
-    dv.setFloat32(o,filter.highpassHz,true);o+=4;
-    dv.setFloat32(o,filter.lowpassHz,true);o+=4;
   }
   return out;
 }
@@ -898,12 +866,12 @@ function sweepConfidenceThreshold(probs,y,{min=0.30,max=0.90,step=0.01,minCovera
 }
 
 
-async function exportNai4(model,scaler,labels,N,rep,useFilter=false) {
+async function exportNai4(model,scaler,labels,N,rep) {
   const layers=await extractTfWeightsOI(model);
   const dims=[layers[0].I,...layers.map(l=>l.O)];
   const binary=labels.length===2;
   const files={
-    'cfg.bin':makeCfg(labels,N,dims[0],dims,rep,binary,null,null,useFilter),
+    'cfg.bin':makeCfg(labels,N,dims[0],dims,rep,binary),
     'mean.bin':float32LE(scaler.mean),
     'scale.bin':float32LE(scaler.scale),
   };
@@ -956,7 +924,7 @@ function packedMetadataLE(bias, multiplier, shift) {
   return bytes;
 }
 
-async function exportNai4Int8(model,scaler,labels,N,rep,calibrationRows,validationRows,validationY,useFilter=false) {
+async function exportNai4Int8(model,scaler,labels,N,rep,calibrationRows,validationRows,validationY) {
   const floatLayers=await extractTfWeightsOI(model);
   if(floatLayers.length===0 || floatLayers.length>8)throw new Error('Expected 1..8 Dense layers');
   const dims=[floatLayers[0].I,...floatLayers.map(l=>l.O)];
@@ -972,7 +940,7 @@ async function exportNai4Int8(model,scaler,labels,N,rep,calibrationRows,validati
   const quant={strideSamples:0,thresholdMin:0,thresholdMax:1,confidenceThreshold:0.5,
     inputScale:activations[0].scale,inputZeroPoint:activations[0].zeroPoint,
     layers:layers.map(l=>({outputScale:l.outputScale,outputZeroPoint:l.outputZeroPoint}))};
-  const files={'cfg.bin':makeCfg(labels,N,dims[0],dims,rep,binary,quant,null,useFilter),
+  const files={'cfg.bin':makeCfg(labels,N,dims[0],dims,rep,binary,quant),
     'mean.bin':float32LE(scaler.mean),'scale.bin':float32LE(scaler.scale)};
   layers.forEach((l,i)=>{
     const n=String(i).padStart(2,'0');
@@ -993,9 +961,11 @@ function parseCfg(bytes) {
   let o=4;
   const v=[];for(let i=0;i<8;i++){v.push(dv.getUint16(o,true));o+=2;}
   const [version,flags,N,rate,nLayers,nClasses,inputDim,reserved]=v;
-  if(!['NAI2','NAI3','NAI4'].includes(magic))throw new Error(`Unsupported NAI magic ${magic}`);
-  let rep;if(magic==='NAI2')rep='accel';else rep=CODE_TO_REP[reserved]||null;
-  if(!rep)throw new Error(`Unknown representation code ${reserved}`);
+  if(magic!=='NAI4'||version!==4)throw new Error('NAI4 v4 model required');
+  if((flags&FLAG_LPF5)===0 || (flags&~(FLAG_BINARY_CLASSIFIER|FLAG_INT8|FLAG_LPF5)))
+    throw new Error('Incompatible preprocessing: a new 5 Hz LPF model is required. Retrain/export using this web version.');
+  const rep=CODE_TO_REP[reserved]||null;
+  if(!rep)throw new Error(`Unsupported representation code ${reserved}; retrain with the new input selection.`);
   const dims=[];for(let i=0;i<nLayers+1;i++){dims.push(dv.getUint16(o,true));o+=2;}
   const dec=new TextDecoder('utf-8'),labels=[];
   for(let i=0;i<nClasses;i++){const n=bytes[o++];labels.push(dec.decode(bytes.slice(o,o+n)));o+=n;}
@@ -1010,21 +980,15 @@ function parseCfg(bytes) {
     const confidenceThreshold=dv.getFloat32(o,true);o+=4;
     const inputScale=dv.getFloat32(o,true);o+=4;
     const inputZeroPoint=dv.getInt32(o,true);o+=4;
-    const layers=[];for(let i=0;i<nLayers;i++){const outputScale=dv.getFloat32(o,true);o+=4;const outputZeroPoint=dv.getInt32(o,true);o+=4;layers.push({outputScale,outputZeroPoint});}
+    const layers=[];for(let i=0;i<nLayers;i++){
+      const outputScale=dv.getFloat32(o,true);o+=4;
+      const outputZeroPoint=dv.getInt32(o,true);o+=4;
+      layers.push({outputScale,outputZeroPoint});
+    }
     quant={strideSamples,thresholdMin,thresholdMax,confidenceThreshold,inputScale,inputZeroPoint,layers};
   }
-  let filter=null;
-  if(o<bytes.length){
-    if(o+16!==bytes.length)throw new Error(`Unexpected cfg.bin trailing bytes (${bytes.length-o})`);
-    const fmagic=new TextDecoder().decode(bytes.slice(o,o+4));o+=4;
-    if(fmagic!==FILTER_MAGIC)throw new Error(`Unknown filter config ${fmagic}`);
-    const fflags=dv.getUint16(o,true);o+=2;o+=2;
-    const highpassHz=dv.getFloat32(o,true);o+=4;
-    const lowpassHz=dv.getFloat32(o,true);o+=4;
-    filter={flags:fflags,highpassHz,lowpassHz};
-  }
   if(o!==bytes.length)throw new Error(`Unexpected cfg.bin trailing bytes (${bytes.length-o})`);
-  return {magic,version,flags,N,rate,nLayers,nClasses,inputDim,rep,dims,labels,binary:!!(flags&FLAG_BINARY_CLASSIFIER),int8,quant,filter};
+  return {magic,version,flags,N,rate,nLayers,nClasses,inputDim,rep,dims,labels,binary:!!(flags&FLAG_BINARY_CLASSIFIER),int8,quant};
 }
 
 async function loadNai(file) {
@@ -1185,5 +1149,5 @@ window.NAI = Object.freeze({
   fitScaler, configureRepresentationScaler, standardizeRows, flattenRows,
   makeModel, predictTf, accuracy,
   exportNai4, exportNai4Int8, loadNai, predictNai, predictQuantized,
-  _internals:Object.freeze({makeNpyHeader,npyF32,npyI32,npyUnicode,parseNpy,MT19937,makeCfg,parseCfg}),
+  _internals:Object.freeze({makeNpyHeader,npyF32,npyI32,npyUnicode,parseNpy,MT19937,makeCfg,parseCfg,filterRaw6Lpf5}),
 });

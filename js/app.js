@@ -7,7 +7,7 @@ if (!window.noodleBLE || !window.NoodleAIBLE || !window.NoodleMetrics) {
 
 
 const $=id=>document.getElementById(id);
-const REP_LABEL={accel:'Accelerometer',gyro:'Gyroscope','accel+gyro':'Accel + Gyro',quaternion:'Relative Quaternion',velocity:'Estimated Velocity','velocity+quaternion':'Velocity + Quaternion','accel+mag':'Accel + magnitude (Ax, Ay, Az, |a|) [legacy]','accel-dir+mag':'Accel direction + magnitude (unit XYZ, |a|)'};
+const REP_LABEL={accel:'Accelerometer',gyro:'Gyroscope','accel+gyro':'Accel + Gyro',quaternion:'Relative Quaternion',velocity:'Estimated Velocity','velocity+quaternion':'Velocity + Quaternion','accel-dir+mag':'Accel direction + magnitude (unit XYZ, |a|)'};
 const MAX_CLASSES=10; // Keep in sync with NoodleAIModel::MAX_CLASSES in the ESP32 firmware.
 const state={
   labels:[],samples:[],rawSamples:[],targets:[],rawLengths:[],durationsMs:[],N:100,setupLocked:false,trainingInProgress:false,
@@ -36,10 +36,7 @@ function datasetObject(){
 function parseHidden(){const h=$('hiddenLayers').value.split(',').map(s=>s.trim()).filter(Boolean).map(Number);if(!h.length||h.some(v=>!Number.isInteger(v)||v<1||v>512))throw new Error('Hidden layers must be comma-separated integers from 1 to 512.');return h;}
 
 function selectedRep(){return $('representation').value;}
-function selectedDirectHplp(){return ['accel','gyro','accel+gyro','accel+mag','accel-dir+mag'].includes(selectedRep()) && ($('directHplp').checked || ['accel+mag','accel-dir+mag'].includes(selectedRep()));}
-function refreshFilterControl(){const rep=selectedRep(),cb=$('directHplp');const mag=['accel+mag','accel-dir+mag'].includes(rep);if(mag){cb.checked=true;cb.disabled=true;}else{cb.disabled=!['accel','gyro','accel+gyro'].includes(rep);}$('directHplpHint').textContent = mag?'Required: HPF→LPF before resampling; XYZ direction is zero when |a| ≤ 0.001 g.':cb.disabled?'Derived velocity uses its existing gravity-compensated preprocessing.':'Checked: HPF→LPF on raw 50-Hz samples; no per-gesture centering. Unchecked: with per-gesture centering.';}
 function updateInputAndTopology(){
-  refreshFilterControl();
   state.N=Math.max(5,Math.min(500,Number($('normalizedLength').value)||100));
   const rep=selectedRep(),D=state.N*NAI.REP[rep].channels;
   $('inputDimSummary').textContent=`${state.N} × ${NAI.REP[rep].channels} = ${D}`;
@@ -159,7 +156,7 @@ $('removeLabelBtn').addEventListener('click',()=>{
       :'All classes removed. Add a class to continue.';
   }catch(err){alert(err.message);log(`Class removal ERROR: ${err.message}`);}
 });
-$('normalizedLength').addEventListener('input',updateInputAndTopology);$('representation').addEventListener('change',updateInputAndTopology);$('directHplp').addEventListener('change',updateInputAndTopology);$('hiddenLayers').addEventListener('input',updateInputAndTopology);
+$('normalizedLength').addEventListener('input',updateInputAndTopology);$('representation').addEventListener('change',updateInputAndTopology);$('hiddenLayers').addEventListener('input',updateInputAndTopology);
 
 $('lockSetupBtn').addEventListener('click',()=>{if(state.trainingInProgress)return;const N=Number($('normalizedLength').value);if(!Number.isInteger(N)||N<5||N>500){alert('Use 5..500 normalized gesture points.');return;}if(state.labels.length<2){alert('Define at least two labels first.');return;}state.N=N;lockUi(true);refreshDataset();$('recordProgress').textContent=`Ready. Select a label, click “Use BOOT to record”, then hold BOOT while drawing.`;log(`Dataset locked: ${N} normalized points; ${state.labels.length} labels.`);});
 $('resetDatasetBtn').addEventListener('click',()=>resetDataset(true));
@@ -288,7 +285,7 @@ async function trainModel(){
   let model=null,tx=null,vx=null,ty=null,vy=null;
   try{
     if(!state.setupLocked||!state.targets.length)throw new Error('Create or load a dataset first.');
-    const hidden=parseHidden(),epochs=Number($('epochs').value),rep=selectedRep(),useFilter=selectedDirectHplp();
+    const hidden=parseHidden(),epochs=Number($('epochs').value),rep=selectedRep();
     if(!Number.isInteger(epochs)||epochs<10||epochs>5000)throw new Error('Epochs must be 10..5000.');
     const ds=datasetObject(),K=ds.labels.length;
     const counts=Array(K).fill(0);ds.y.forEach(y=>{if(y<0||y>=K)throw new Error('Invalid dataset label.');counts[y]++;});
@@ -297,8 +294,8 @@ async function trainModel(){
     // New run supersedes stale metrics and previously trained parameters.
     invalidateModel();lockUi(state.setupLocked);
     $('trainResult').textContent='Preparing representation…';
-    if(useFilter && Math.abs(ds.sampleRate-NAI.SAMPLE_RATE_HZ)>1e-3) throw new Error('Filtered sample rate must match NAI4 model sample rate');
-    const rows=NAI.buildRepresentationDataset(ds,rep,useFilter),D=rows[0].length;
+    if(Math.abs(ds.sampleRate-NAI.SAMPLE_RATE_HZ)>1e-3) throw new Error('LPF5 sample rate must match the 50-Hz NAI4 model sample rate');
+    const rows=NAI.buildRepresentationDataset(ds,rep),D=rows[0].length;
     if(D>1536)throw new Error('Input dimension '+D+' exceeds firmware MAX_DIM=1536. Reduce normalized length.');
     const initialSplit=NAI.sklearnStratifiedSplit(ds.y,K,42);
     const split=window.NoodleMetrics.ensureClassCoverage(initialSplit,ds.y,K);
@@ -331,10 +328,10 @@ async function trainModel(){
     const tr=await NAI.predictTf(model,Xtr,K),va=await NAI.predictTf(model,Xva,K);
     const train=window.NoodleMetrics.evaluate(ytr,tr.pred,ds.labels);
     const validation=window.NoodleMetrics.evaluate(yva,va.pred,ds.labels);
-    const pkg=await NAI.exportNai4(model,scaler,ds.labels,ds.N,rep,useFilter);
+    const pkg=await NAI.exportNai4(model,scaler,ds.labels,ds.N,rep);
     // PTQ uses ONLY the training split for calibration. Validation data is
     // never used to derive weight/activation scales or the fixed threshold.
-    const int8Pkg=await NAI.exportNai4Int8(model,scaler,ds.labels,ds.N,rep,Xtr,Xva,yva,useFilter);
+    const int8Pkg=await NAI.exportNai4Int8(model,scaler,ds.labels,ds.N,rep,Xtr,Xva,yva);
     const quantMetrics=window.NoodleMetrics.evaluate(yva,int8Pkg.validationPredictions,ds.labels);
     const int8ValidationPredictions=split.test.map((datasetIndex,i)=>({datasetIndex,actual:Number(yva[i]),predicted:Number(int8Pkg.validationPredictions[i]),probabilities:Array.from(int8Pkg.validationProbabilities[i])}));
     const matches=Array.from(va.pred).reduce((n,p,i)=>n+(Number(p)===Number(int8Pkg.validationPredictions[i])?1:0),0);
@@ -342,7 +339,7 @@ async function trainModel(){
     const report={train,validation,int8Validation:quantMetrics,fp32Int8Agreement,int8ValidationPredictions,history:hist,split,
       validationPredictions:split.test.map((datasetIndex,i)=>({datasetIndex,actual:Number(yva[i]),predicted:Number(va.pred[i]),probabilities:Array.from(va.probs[i])})),
       metadata:{createdUtc:new Date().toISOString(),model_format:'NAI4 FP32 + NAI4 packed INT8',architecture:pkg.dims,
-        representation:rep,representation_label:REP_LABEL[rep],directHplp:useFilter,highpassHz:useFilter?0.10:null,lowpassHz:useFilter?8.0:null,normalizedLength:ds.N,sampleRateHz:ds.sampleRate,
+        representation:rep,representation_label:REP_LABEL[rep],preprocessing:'LPF5-before-resampling',lowpassHz:5.0,centering:rep==='accel'||rep==='gyro'||rep==='accel+gyro'?'per-gesture mean':'none',normalizedLength:ds.N,sampleRateHz:ds.sampleRate,
         labels:[...ds.labels],targets:Array.from(ds.y),hiddenLayers:hidden,epochs,
         optimizer:'Adam',learningRate:0.001,batchSize:Math.min(200,split.train.length),seed:42,
         method:'20% stratified validation holdout (at least one example per class per split)',coverageAdjusted:split.coverageAdjusted,
