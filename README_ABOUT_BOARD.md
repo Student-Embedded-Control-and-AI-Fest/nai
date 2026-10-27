@@ -2,6 +2,8 @@
 
 The **Waveshare ESP32-S3-Matrix** is a compact ESP32-S3 development board with an **8×8 RGB LED matrix**, **QMI8658 six-axis IMU**, **USB-C**, **Bluetooth LE**, and **Wi-Fi**. The ESP32-S3 uses a dual-core processor operating up to 240 MHz, with 512 KB on-chip SRAM and 4 MB flash on the documented board variant. For the hardware specification, see [Waveshare's official guide](https://docs.waveshare.com/ESP32-S3-Matrix).
 
+The **About the Board** tab displays a photograph of the actual board, stored locally as `assets/esp32-s3-matrix-board.png` (rather than the earlier CSS-only LED grid).
+
 ## See it in action
 
 **[Watch the NoodleAI gesture-recognition demo (demo.mp4)](https://github.com/Student-Embedded-Control-and-AI-Fest/nai/blob/main/demo.mp4)** on the project's GitHub repository.

@@ -319,13 +319,11 @@
             </div>
             <p class="about-help-text">The demo opens the project's <code>demo.mp4</code> on GitHub in a new tab.</p>
           </div>
-          <div class="about-board-showcase" aria-label="Stylized illustration of the 8 by 8 LED matrix on the ESP32-S3 Matrix board">
-            <div class="about-board-art">
-              <div class="about-board-top"><span>ESP32-S3 MATRIX</span><span>8×8 RGB</span></div>
-              <div class="about-led-grid" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
-              <div class="about-board-bottom"><span>BOOT • QMI8658</span><span>Wi-Fi + BLE</span></div>
+          <div class="about-board-showcase" aria-label="Photograph of the Waveshare ESP32-S3 Matrix board">
+            <div class="about-board-photo-card">
+              <img class="about-board-photo" src="assets/esp32-s3-matrix-board.png" width="800" height="800" loading="lazy" decoding="async" alt="Actual Waveshare ESP32-S3 Matrix board showing its 8 by 8 RGB LED matrix and USB-C connector">
             </div>
-            <small>Stylized LED matrix illustration · see the official guide for the actual board and pinout</small>
+            <small>Waveshare ESP32-S3 Matrix · 8×8 RGB LED matrix and onboard QMI8658 IMU</small>
           </div>
         </div>
 
@@ -360,7 +358,7 @@
           <div class="about-shared-steps">
             <div><strong>1</strong><span>Raw IMU · nominal 50 Hz</span></div>
             <div><strong>2</strong><span>First-order LPF · 5 Hz, reset each gesture</span></div>
-            <div><strong>3</strong><span>Time-normalize to N points where applicable</span></div>
+            <div><strong>3</strong><span>Resample every BOOT gesture to N time steps (100 by default)</span></div>
             <div><strong>4</strong><span>Apply representation-specific steps and training scaler</span></div>
           </div>
           <div class="about-table-wrap">
@@ -368,7 +366,7 @@
               <thead><tr><th scope="col">Input kind</th><th scope="col">Channels</th><th scope="col">After the 5 Hz LPF</th><th scope="col">MLP inputs<br>at N = 100</th></tr></thead>
               <tbody>
                 <tr><th scope="row">Accelerometer <span class="about-code">ax, ay, az</span></th><td>3</td><td>Resample, then subtract <strong>each axis's mean over that gesture</strong>. Apply the training-derived StandardScaler.</td><td>300</td></tr>
-                <tr><th scope="row">Accel direction + magnitude <span class="about-code">ux, uy, uz, |a|</span></th><td>4</td><td>Resample filtered XYZ, then split into <strong>unit direction</strong> and <strong>total magnitude</strong>. No gesture centering. Only the magnitude channel is standardized.</td><td>400</td></tr>
+                <tr><th scope="row">Accel direction + magnitude <span class="about-code">ux, uy, uz, |a|</span></th><td>4</td><td>Resample filtered XYZ, then split into <strong>unit direction</strong> and <strong>total magnitude</strong>. No per-gesture centering. Apply the training-derived StandardScaler only to magnitude; leave the three unit-direction components unchanged.</td><td>400</td></tr>
                 <tr><th scope="row">Gyroscope <span class="about-code">gx, gy, gz</span></th><td>3</td><td>Use gyro readings corrected for startup bias (when calibration succeeds). Resample, center each axis independently, then apply StandardScaler.</td><td>300</td></tr>
                 <tr><th scope="row">Accel + Gyro <span class="about-code">ax, ay, az, gx, gy, gz</span></th><td>6</td><td>Filter all six channels, resample, center <strong>each of the six axes separately</strong>, then apply StandardScaler.</td><td>600</td></tr>
                 <tr><th scope="row">Estimated Velocity <span class="about-code">vx, vy, vz</span></th><td>3</td><td>Low-pass filter accelerometer and gyro; use <strong>Madgwick orientation</strong>, remove world-frame gravity, integrate acceleration and apply endpoint correction, then resample and standardize.</td><td>300</td></tr>
