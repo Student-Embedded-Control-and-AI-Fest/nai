@@ -5,7 +5,7 @@
 #include <FFat.h>
 #include <SensorQMI8658.hpp>
 #include "nai_gyro_calibration.h"
-#include "nai_motion_hplp.h"
+#include "nai_motion_lpf5.h"
 #include <Adafruit_NeoPixel.h>
 
 #include <BLEDevice.h>
@@ -718,7 +718,7 @@ static void resampleRawRepresentation(const float *raw6, uint16_t rawSamples,
         for (uint16_t i = 0; i < normalizedSamples; ++i)
             for (uint8_t c = 0; c < channels; ++c)
                 out[i * channels + c] =
-                    (model.representation() == NoodleAIModel::REP_ACCEL_MAG && c == 3) ? 0.0f :
+                    ((model.representation() == NoodleAIModel::REP_ACCEL_DIR_MAG) && c == 3) ? 0.0f :
                     raw6[rawAxisForRepresentationChannel(c)];
         return;
     }
@@ -732,7 +732,7 @@ static void resampleRawRepresentation(const float *raw6, uint16_t rawSamples,
         const float alpha = pos - static_cast<float>(i0);
         for (uint8_t c = 0; c < channels; ++c) {
             // The magnitude channel is filled after XYZ interpolation.
-            if (model.representation() == NoodleAIModel::REP_ACCEL_MAG && c == 3) {
+            if ((model.representation() == NoodleAIModel::REP_ACCEL_DIR_MAG) && c == 3) {
                 out[i * channels + c] = 0.0f;
                 continue;
             }
@@ -979,35 +979,37 @@ static bool buildInferenceRepresentation(uint16_t rawSamples) {
     const uint8_t channels = static_cast<uint8_t>(model.channelCount());
     const auto rep = model.representation();
 
-    if (rep == NoodleAIModel::REP_ACCEL || rep == NoodleAIModel::REP_GYRO ||
-        rep == NoodleAIModel::REP_ACCEL_GYRO || rep == NoodleAIModel::REP_ACCEL_MAG) {
-        if (model.directHplp()) {
-            const bool accel = (rep != NoodleAIModel::REP_GYRO);
-            const bool gyro = (rep == NoodleAIModel::REP_GYRO ||
-                               rep == NoodleAIModel::REP_ACCEL_GYRO);
-            nai_filter_raw6_hplp(gestureRaw, rawSamples,
-                                 static_cast<float>(model.sampleRateHz()), accel, gyro);
-        }
+    // Identical filtering policy for every supported representation:
+    // 5-Hz LPF on raw IMU samples, reset to the first sample per BOOT gesture.
+    const bool derived = (rep == NoodleAIModel::REP_QUATERNION ||
+                          rep == NoodleAIModel::REP_VELOCITY ||
+                          rep == NoodleAIModel::REP_VELOCITY_QUATERNION);
+    const bool accel = (rep != NoodleAIModel::REP_GYRO);
+    const bool gyro = (rep == NoodleAIModel::REP_GYRO ||
+                       rep == NoodleAIModel::REP_ACCEL_GYRO || derived);
+    nai_filter_raw6_lpf5(gestureRaw, rawSamples,
+                         static_cast<float>(model.sampleRateHz()), accel, gyro);
+    if (!derived) {
         resampleRawRepresentation(gestureRaw, rawSamples, inferenceWindow, normalized);
-        if (rep == NoodleAIModel::REP_ACCEL_MAG) {
-            // Magnitude of the *filtered acceleration*, not gravity magnitude.
-            for (uint16_t i = 0; i < normalized; ++i) {
-                const uint16_t b = i * 4u;
-                const float x = inferenceWindow[b], y = inferenceWindow[b+1], z = inferenceWindow[b+2];
-                inferenceWindow[b+3] = sqrtf(x*x + y*y + z*z);
+        if (rep == NoodleAIModel::REP_ACCEL_DIR_MAG) {
+            for (uint16_t i=0;i<normalized;++i) {
+                const uint16_t b=i*4u;
+                float encoded[4];
+                nai_accel_direction_magnitude(inferenceWindow[b],
+                    inferenceWindow[b+1],inferenceWindow[b+2],encoded);
+                for (uint8_t c=0;c<4;++c) inferenceWindow[b+c]=encoded[c];
             }
-        }
-        if (!model.directHplp()) {
+        } else {
             float gestureMean[7];
             centerNormalizedGesture(inferenceWindow, normalized, channels, gestureMean);
         }
-        Serial.printf("REP raw=%s %s; normalized=%u channels=%u input=%u\n",
-                      model.representationName(), model.directHplp() ? "HPF+LPF" : "centered",
-                      (unsigned)normalized, (unsigned)channels, (unsigned)model.inputDim());
+        Serial.printf("REP raw=%s LPF5 %s; normalized=%u channels=%u input=%u\n",
+                      model.representationName(),
+                      rep==NoodleAIModel::REP_ACCEL_DIR_MAG ? "unit-dir+mag" : "centered",
+                      (unsigned)normalized,(unsigned)channels,(unsigned)model.inputDim());
         return true;
     }
-
-    if (!derivedRaw || !buildDerivedRawRepresentation(gestureRaw, rawSamples, derivedRaw)) return false;
+    if (!derivedRaw || !buildDerivedRawRepresentation(gestureRaw,rawSamples,derivedRaw)) return false;
     resampleGeneric(derivedRaw, rawSamples, channels, inferenceWindow, normalized);
     if (rep == NoodleAIModel::REP_QUATERNION) {
         normalizeQuaternionChannels(inferenceWindow, normalized, channels, 0);
@@ -1233,7 +1235,7 @@ void setup() {
                   (unsigned)TRAIN_SAMPLE_RATE_HZ,
                   (unsigned)MIN_GESTURE_SAMPLES,
                   (unsigned)MAX_GESTURE_SAMPLES);
-    Serial.println("NAI4 reps: accel | gyro | accel+gyro | accel+mag | quaternion | velocity | velocity+quaternion");
+    Serial.println("NAI4 LPF5 reps: accel | gyro | accel+gyro | accel-dir+mag | velocity");
     Serial.println("Derived reps: 6-axis Madgwick -> relative quaternion / gravity-compensated velocity -> temporal resampling -> StandardScaler");
     Serial.printf("Training BLE: up to %u samples/notification (count-aware final packet)\n",
                   (unsigned)TRAIN_BLE_BATCH_SIZE);

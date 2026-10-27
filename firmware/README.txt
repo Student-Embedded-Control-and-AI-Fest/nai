@@ -1,55 +1,27 @@
-NoodleAI (NAI)
-==============
+NoodleAI ESP32-S3 Matrix — LPF5 Firmware
+========================================
 
-Drop-in changed files
----------------------
-python_gui/app.py
-python_gui/ble_link.py   
-python_gui/noodle_model.py
-python_gui/motion_features.py  
-firmware/src/main.cpp
-firmware/lib/NoodleAIModel/NoodleAIModel.h
-firmware/lib/NoodleAIModel/NoodleAIModel.cpp
+Use with matching NoodleAI Mode 1 Web. See README_DIRECTION_MAGNITUDE.md
+and web/README_INPUT_PREPROCESSING.md for exact feature definitions.
 
-NAI representation codes
-------------------------------------
-1  accel                  ax ay az
-2  gyro                   gx gy gz
-3  accel+gyro             ax ay az gx gy gz
-4  quaternion             relative [qw qx qy qz]
-5  velocity               estimated [vx vy vz] m/s
-6  velocity+quaternion    [vx vy vz qw qx qy qz]
+Capture: BOOT press/release at nominal 50 Hz. Per-gesture 5 Hz first-order
+low-pass filter (state initialized to the gesture's first raw sample), then
+resampling to the model's normalized length (usually 100).
 
-Derived-feature pipeline
-------------------------
-Raw QMI8658 accel+gyro at 50 Hz
-  -> initialize attitude from the first accelerometer sample (yaw is arbitrary)
-  -> 6-axis Madgwick update, beta = 0.10
-  -> relative quaternion q_rel = conj(q0) * q
-  -> rotate acceleration to the gesture/world frame and subtract 1 g
-  -> trapezoidal integration for estimated velocity
-  -> linear endpoint drift correction so v(0)=v(T)=0
-  -> temporal resampling to the model's normalized length
-  -> StandardScaler
-  -> Noodle file-backed MLP
+Input representations (NAI4):
+1 accel             (3 channels), LPF5 then per-gesture mean centering
+2 gyro              (3 channels), LPF5 then per-gesture mean centering
+3 accel+gyro        (6 channels), LPF5 then per-gesture mean centering
+5 velocity          (3 channels), LPF5 before Madgwick + gravity compensation
+9 accel-dir+mag     (4 channels), LPF5 unit direction + magnitude; no centering
 
-Raw accel/gyro modes keep the previous behavior:
-  temporal resampling -> per-gesture channel centering -> StandardScaler -> MLP
+All use training-derived scaler; for ID9 only magnitude uses non-identity
+scaling. Quaternion representations 4 and 6 remain recognized by the
+firmware but are not available for new training through the web dropdown.
 
-Data
-----
-NAI saves raw variable-length six-axis gestures using raw_data + raw_offsets in addition to the normalized data.
+Models require NAI4 version 4 with LPF5 flag 0x0008; older packages cannot
+be loaded, and must be retrained/exported. Existing raw NPZ gesture data
+with raw_data/raw_offsets can be reused for retraining.
 
-Live BLE
---------
-The previously restored continuous six-axis BLE streaming path is preserved.
-Model upload still pauses live streaming while FFat owns the BLE link.
-
-Suggested first test
---------------------
-1. Flash the NAI firmware files together.
-2. Start the NAI GUI.
-3. Confirm the Live IMU plot moves immediately after connection.
-4. Record a fresh raw dataset.
-5. Train the same dataset with Accelerometer, Estimated Velocity, and
-   Velocity + Quaternion for a controlled comparison.
+Firmware builds: use platformio.ini environments, including FP32 file-backed,
+FP32 SRAM, and INT8. BLE and model deployment behavior is otherwise unchanged.
