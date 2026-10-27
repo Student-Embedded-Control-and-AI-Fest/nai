@@ -120,9 +120,9 @@
             <div class="label-editor">
               <div class="label-add"><input id="labelEntry" placeholder="Class label, e.g. wave"><button id="addLabelBtn" class="secondary">Add class</button></div>
               <select id="labelList" size="4" aria-label="Defined labels"></select>
-              <button id="removeLabelBtn" class="ghost">Remove empty class</button>
+              <button id="removeLabelBtn" class="ghost">Remove class</button>
             </div>
-            <p class="class-edit-hint">Add classes anytime, even after training. Existing samples are kept; class changes require retraining. Classes with recorded samples cannot be removed.</p>
+            <p class="class-edit-hint">Add or remove classes even after recording or training. Removing a class also deletes its recorded samples (with confirmation); other classes and samples are kept. Class changes require retraining.</p>
 
             <div class="action-row split-actions">
               <div><button id="lockSetupBtn" class="primary">Lock gesture length &amp; start</button><button id="resetDatasetBtn" class="ghost">Reset</button></div>
@@ -163,16 +163,15 @@
           </div>
 
           <div class="form-grid train-grid">
-            <label>Input representation<select id="representation"><option value="accel">Accelerometer</option><option value="accel+mag">Accel + magnitude (Ax, Ay, Az, |a|)</option><option value="gyro">Gyroscope</option><option value="accel+gyro">Accel + Gyro</option><option value="quaternion">Relative Quaternion</option><option value="velocity">Estimated Velocity</option><option value="velocity+quaternion">Velocity + Quaternion</option></select></label>
+            <label>Input representation<select id="representation"><option value="accel">Accelerometer</option><option value="accel-dir+mag">Accel direction + magnitude (unit Ax, Ay, Az, |a|)</option><option value="gyro">Gyroscope</option><option value="accel+gyro">Accel + Gyro</option><option value="velocity">Estimated Velocity</option></select></label>
             <label>Hidden layers<input id="hiddenLayers" value="32,16" placeholder="32,16"></label>
             <label>Epochs<input id="epochs" type="number" min="10" max="5000" value="300"></label>
           </div>
-          <label class="methodology" style="display:block;margin:10px 0"><input type="checkbox" id="directHplp" checked> Use HPF (0.10 Hz) → LPF (8 Hz) on raw direct-IMU samples before resampling</label>
-          <p id="directHplpHint" class="methodology">Checked: HPF→LPF; unchecked: existing per-gesture centering.</p>
+          <p class="methodology">Preprocessing: 5 Hz low-pass filter on the raw 50-Hz IMU samples, before temporal resampling. Accelerometer, gyroscope, and combined inputs use per-gesture mean centering. Direction + magnitude preserves total acceleration and unit direction.</p>
           <div id="topology" class="topology"><span>NETWORK</span>Topology: —</div>
           <div class="action-row train-action"><button id="trainBtn" class="primary" disabled>Train model + evaluate INT8</button><span id="trainResult" class="inline-status"></span></div>
           <p id="quantResult" class="methodology">Train a model to evaluate INT8 quantization.</p>
-          <div class="status-box compact info-box">Mode 1 learns from complete BOOT-delimited gestures. Variable-duration recordings are normalized to the configured point count before the selected representation and scaler are applied.</div>
+          <div class="status-box compact info-box">Mode 1 learns from complete BOOT-delimited gestures. A 5 Hz LPF operates before time normalization. Direct sensor inputs are mean-centered; unit direction is retained for direction+magnitude. Training-derived feature scaling is applied afterward.</div>
         </div>
       </section>
 
@@ -264,9 +263,9 @@
     </footer>
   </div>
 
-  <script src="js/core.js?v=mode1-hplp-mag-v1"></script>
+  <script src="js/core.js?v=mode1-lpf5-v1"></script>
   <script src="js/ble.js?v=mode1-studio"></script>
   <script src="js/metrics.js?v=mode1-dual-precision-v2"></script>
-  <script src="js/app.js?v=mode1-hplp-mag-v1"></script>
+  <script src="js/app.js?v=mode1-lpf5-class-delete-v1"></script>
 </body>
 </html>

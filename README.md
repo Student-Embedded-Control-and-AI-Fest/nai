@@ -65,18 +65,23 @@ Pinned CDN dependencies:
 
 The first page load needs internet access for the CDN files. Gesture data, training data, and model processing stay local in the browser.
 
+## Detailed preprocessing reference
+
+See **[README_INPUT_PREPROCESSING.md](README_INPUT_PREPROCESSING.md)** for the exact filtering, unit-direction encoding, temporal resampling, gravity handling, channel layouts, and StandardScaler behavior of the five selectable input kinds.
+
 ## NAI4 motion representations
 
-The raw six-axis gesture can be transformed into:
+The training dropdown supports:
 
 - Accelerometer
+- **Accel direction + magnitude** (`ux,uy,uz,|a|`; ID 9)
 - Gyroscope
 - Accel + Gyro
-- Relative Quaternion
 - Estimated Velocity
-- Velocity + Quaternion
 
-The defining Mode 1 behavior remains the same for every representation: **BOOT supplies the gesture boundaries; the browser/device normalizes the complete gesture before inference.**
+The web trains five input kinds. Quaternion and Velocity + Quaternion are not selectable for new models. Previous high-pass-filter model packages are intentionally incompatible with this LPF5-only firmware; export fresh models from raw gesture data.
+
+The defining Mode 1 behavior is unchanged: **BOOT supplies each gesture boundary, and the gesture is resampled to a fixed number of time positions before FCN inference.**
 
 ## Editing classes after capture or training
 
@@ -88,9 +93,14 @@ been trained, adding/removing a class invalidates that *browser-side* model;
 record examples for the new class and train again before deploying.
 
 **Lock gesture length & start** fixes only the normalized gesture length.
-A class with recorded samples cannot be deleted via **Remove empty class**
-(to avoid silently erasing data). The ESP32-S3 firmware supports at most
-**10 classes** and at most **31 UTF-8 bytes per class label**.
+**Remove class** works whether or not the class has saved samples. When a class
+has recorded gestures, the browser asks for confirmation, then removes exactly
+those gestures and their raw samples, normalized samples, lengths, and durations.
+The remaining class IDs are compacted consistently for `.npz` export and training;
+all other gestures remain intact. Any previously trained browser model is invalidated,
+so train and deploy again after changing classes. Deleted recordings cannot be
+recovered unless you previously saved the original `.npz` dataset. The ESP32-S3
+firmware supports at most **10 classes** and at most **31 UTF-8 bytes per class label**.
 
 If a previously deployed model is still running on the board, it is not
 automatically modified by edits in the browser; deploy the retrained model
@@ -117,7 +127,9 @@ The existing **seed-42 stratified approximately 80/20 holdout** is preserved. Va
 To run the local pure-JavaScript smoke tests (requires Node.js):
 
 ```bash
-node tests/class_editor_smoke.js
-node tests/metrics_smoke.js
-node tests/training_ui_smoke.js
+node tests/test_preprocessing.cjs
+node tests/test_class_deletion.cjs
 ```
+
+
+**Current preprocessing:** The input-kind dropdown has five choices; see [README_INPUT_PREPROCESSING.md](README_INPUT_PREPROCESSING.md) for the LPF5 preprocessing and the new unit-direction + magnitude representation ID 9.

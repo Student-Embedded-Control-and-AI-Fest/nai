@@ -1,16 +1,7 @@
-# Mode 1 packed INT8 export and BLE deployment
+# Mode 1 INT8 package
 
-The browser trains its MLP in TensorFlow.js, calibrates full INT8 using **training-only** standardized inputs, and evaluates its quantized predictor on held-out validation data. The exported INT8 NAI4 package contains `cfg.bin` with `FLAG_INT8` and `Q8M1` metadata, `mean.bin`, `scale.bin`, and **two files per Dense layer**: `wNN.bin` and `pNN.bin`.
+Mode 1 exports NAI4 version 4 packed INT8 weights, bias/multiplier/shift metadata, and a training-derived StandardScaler. Both FP32 and INT8 models use the same **LPF5 (5 Hz) raw sensor preprocessing** and carry `cfg.bin` flag `0x0008` (INT8 adds `0x0002`). The firmware rejects packages trained with another preprocessing contract.
 
-- `wNN.bin`: signed INT8, output-major `[O][I]` weights.
-- `pNN.bin`: for each output neuron, three little-endian INT32 integers in order `(bias, multiplier, shift)`; exactly 12 bytes per neuron.
-- No split `bNN.bin`, `mNN.bin`, `sNN.bin` files in INT8 packages.
+The Metrics tab reports separate FP32 and simulated INT8 validation performance, including per-class precision/recall/F1 and confusion matrices; these are not hardware-ground-truth results.
 
-The browser deploy selector defaults to INT8, but deployment is refused unless the connected firmware announces `NAI_PRECISION:INT8` over the BLE status characteristic. This prevents corrupting a working FP32 deployment. 
-
-The browser's binary output uses Noodle's 1/256-step sigmoid LUT. In multiclass prediction it uses the Noodle-compatible INT8 softmax approximation. The new release includes direct host integration tests against the **actual Noodle INT8 FCN implementation** using the supplied reference source.
-
-
-## Paper metrics (FP32 and INT8)
-
-The Metrics tab now contains **two separately labelled validation panels** (FP32 final epoch and post-training INT8), with per-class metrics and confusion matrices for both. The *Export paper report (.zip)* action includes `per_class_int8_validation.csv`, `confusion_matrix_int8_validation.csv`, `validation_predictions_int8.csv`, and `fp32_int8_comparison.csv`. The FP32/INT8 class agreement is measured on identical held-out gestures. The INT8 scores use the JavaScript quantized inference simulator, not device-ground-truth evaluation. Existing datasets can be reloaded and retrained, but the original FP32 paper results ZIP is not sufficient to retroactively reconstruct INT8 results.
+See [README_INPUT_PREPROCESSING.md](README_INPUT_PREPROCESSING.md) for the exact five input kinds and feature ordering.
