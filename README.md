@@ -16,6 +16,7 @@ The complete gesture is then normalized to a fixed number of points, transformed
 - **Capture & Train** — define labels and normalized gesture length; use BOOT to capture one gesture at a time.
 - **Training Curves** — view train/validation loss and accuracy.
 - **Deploy & Infer** — save/deploy the NAI4 package, select device mode, then classify BOOT-delimited gestures on the ESP32-S3-Matrix.
+- **Flash Firmware** — first-time USB flashing of the ESP32-S3 INT8 runtime using ESP Web Tools.
 
 There is no application server. TensorFlow.js training, dataset processing, NAI4 packaging, and BLE communication run in the browser.
 
@@ -133,3 +134,14 @@ node tests/test_class_deletion.cjs
 
 
 **Current preprocessing:** The input-kind dropdown has five choices; see [README_INPUT_PREPROCESSING.md](README_INPUT_PREPROCESSING.md) for the LPF5 preprocessing and the new unit-direction + magnitude representation ID 9.
+
+## Browser-based USB firmware installer
+
+The **Flash Firmware** tab lets a student install the precompiled ESP32-S3
+Matrix INT8 firmware by USB instead of installing PlatformIO. After flashing,
+NoodleAI models are still trained locally and sent over BLE. The installer
+requires a merged factory binary in `firmware/` and uses ESP Web Tools.
+The install control is deliberately hidden until the published binary is found.
+
+See **[README_FIRMWARE_INSTALLER.md](README_FIRMWARE_INSTALLER.md)** for
+merging, publishing, erase/FFat warnings, and a one-command publishing helper.

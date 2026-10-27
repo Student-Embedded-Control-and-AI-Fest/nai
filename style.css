@@ -74,3 +74,29 @@ footer{display:flex;justify-content:space-between;gap:14px;color:#5e6d81;font-si
 @media(max-width:1200px){.metrics-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(max-width:750px){.results-tables{grid-template-columns:1fr}}
 @media(max-width:560px){.metrics-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* USB firmware installer: NoodleAI Mode 1 ESP32-S3-Matrix */
+.inline-tab-link{border:0;background:none;color:#426bc0;font:inherit;font-weight:800;padding:0;text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+.inline-tab-link:hover{color:#253d8f}
+.firmware-install-panel{max-width:1100px;margin:0 auto 18px}
+.flash-steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:22px 0 18px}
+.flash-step{display:flex;gap:12px;align-items:flex-start;background:#f3f6fa;border:1px solid #e2e7f0;border-radius:14px;padding:15px}
+.flash-step-number{width:30px;height:30px;flex:0 0 auto;display:grid;place-items:center;border-radius:10px;background:#222f4d;color:#b2f0ec;font-weight:900}
+.flash-step strong{display:block;color:#202f47;font-size:.91rem}
+.flash-step p{color:#657386;font-size:.79rem;line-height:1.5;margin:5px 0 0}
+.flash-warning{background:#fff7e8;border:1px solid #f1d7a5;border-radius:13px;padding:15px 17px;margin-bottom:20px}
+.flash-warning strong{color:#825516}
+.flash-warning p{margin:4px 0 0;color:#805f2c;font-size:.82rem;line-height:1.5}
+.flash-installer-card{max-width:780px;border:1px solid #dce5f0;border-radius:15px;padding:22px;background:linear-gradient(120deg,#f7faff,#eef5fb)}
+.flash-installer-card h3{color:#1b304a;font-size:1.15rem;margin:6px 0 10px}
+.flash-status{color:#4e6179;line-height:1.5;font-size:.86rem;margin:0 0 14px}
+.flash-status.is-ready{color:#1b7357;font-weight:700}
+.flash-status.is-error{color:#975d29}
+.flash-activate{font:inherit;font-weight:800;padding:13px 21px;border-radius:10px;cursor:pointer}
+.flash-note{color:#5b6f84;font-size:.77rem;line-height:1.55;margin:15px 0 0}
+.flash-troubleshoot{margin-top:22px;border-top:1px solid #e7eaf1;padding-top:12px;max-width:830px}
+.flash-troubleshoot h3{font-size:1rem;color:#21314b;margin:8px 0}
+.flash-troubleshoot p{font-size:.82rem;color:#637187;line-height:1.6;margin:8px 0}
+.flash-troubleshoot a{color:#365ca8}
+#firmwareInstallControl[hidden]{display:none!important}
+@media(max-width:850px){.flash-steps{grid-template-columns:1fr}}

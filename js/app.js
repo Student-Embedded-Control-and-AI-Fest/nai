@@ -406,3 +406,6 @@ function drawTrainingCurves(h=state.history){
 $('clearLogBtn').addEventListener('click',()=>$('log').textContent='');
 $('supportNote').textContent=window.NoodleAIBLE.supportMessage();
 refreshLabels();refreshDataset();lockUi(false);updateInputAndTopology();drawLiveEmpty();drawTrainingCurves();initTf();
+
+// First-install USB flashing lives in a separate page from BLE model deployment.
+document.getElementById('openFirmwareTabBtn')?.addEventListener('click', () => switchTab('firmware'));

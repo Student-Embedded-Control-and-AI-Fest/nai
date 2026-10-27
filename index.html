@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="style.css?v=mode1-dual-precision-v2">
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
 </head>
 <body>
   <div class="ambient ambient-a"></div>
@@ -65,6 +66,7 @@
       <button class="tab" data-tab="dataset"><span>02</span>Capture &amp; Train</button>
       <button class="tab" data-tab="curves"><span>03</span>Results &amp; Curves</button>
       <button class="tab" data-tab="deploy"><span>04</span>Deploy &amp; Infer</button>
+      <button class="tab" data-tab="firmware"><span>05</span>Flash Firmware</button>
     </nav>
 
     <main>
@@ -227,7 +229,8 @@
             <div class="panel">
               <div class="section-title"><span class="step">1</span><div><div class="section-kicker">DEPLOYMENT</div><h2>Send the NAI4 model to ESP32-S3-Matrix</h2><p>Upload the trained model over Web Bluetooth. No firmware recompile is needed when only the model changes.</p></div></div>
               <div class="deploy-controls"><label>Deploy precision<select id="deployPrecision"><option value="int8" selected>INT8 (packed)</option><option value="fp32">FP32</option></select></label><button id="deployBtn" class="primary" disabled>Deploy to ESP32-S3</button><button id="saveModelBtn" class="secondary" disabled>Save FP32 .nai</button><button id="saveInt8Btn" class="secondary" disabled>Save INT8 .nai (packed)</button><label>BLE chunk<select id="chunkSize"><option value="160" selected>160 bytes</option><option value="128">128 bytes</option><option value="64">64 bytes</option><option value="20">20 bytes</option></select></label></div>
-              <p class="methodology paper-caution">The INT8 deployment uses packed <code>wNN.bin</code> and <code>pNN.bin</code> files and requires the ESP32-S3 INT8 firmware. Select FP32 only with an FP32 firmware. The BLE connection checks firmware precision before deployment.</p><div class="progress-wrap"><progress id="deployProgress" max="1" value="0"></progress></div>
+              <p class="methodology paper-caution">The INT8 deployment uses packed <code>wNN.bin</code> and <code>pNN.bin</code> files and requires the ESP32-S3 INT8 firmware. Select FP32 only with an FP32 firmware. The BLE connection checks firmware precision before deployment.</p>
+               <p class="methodology">First-time device setup? <button type="button" id="openFirmwareTabBtn" class="inline-tab-link">Install the INT8 firmware via USB</button> before connecting over BLE.</p><div class="progress-wrap"><progress id="deployProgress" max="1" value="0"></progress></div>
               <div id="deployText" class="status-box compact">No model deployed in this session.</div>
             </div>
 
@@ -254,6 +257,49 @@
           <pre id="log"></pre>
         </div>
       </section>
+      <section id="tab-firmware" class="tab-page" aria-label="Flash firmware">
+        <div class="panel firmware-install-panel">
+          <div class="section-head">
+            <div>
+              <div class="section-kicker">FIRST-TIME DEVICE SETUP</div>
+              <h2>Install NoodleAI INT8 firmware</h2>
+              <p>Flash your Waveshare ESP32-S3-Matrix over USB. No PlatformIO or compiler required on the user's computer.</p>
+            </div>
+            <span class="mode-chip">ESP32-S3 · INT8</span>
+          </div>
+
+          <div class="flash-steps" aria-label="Firmware installation steps">
+            <div class="flash-step"><span class="flash-step-number">1</span><div><strong>Connect via USB</strong><p>Use a data-capable USB cable and connect the ESP32-S3-Matrix to your computer.</p></div></div>
+            <div class="flash-step"><span class="flash-step-number">2</span><div><strong>Choose the serial device</strong><p>Use a browser with Web Serial support (such as Chrome or Edge). Close other serial monitors first.</p></div></div>
+            <div class="flash-step"><span class="flash-step-number">3</span><div><strong>Install the firmware</strong><p>Open the installer below, follow its prompts, and wait until flashing finishes. Reconnect over Bluetooth afterward.</p></div></div>
+          </div>
+
+          <div class="flash-warning" role="note">
+            <strong>Back up saved models before flashing.</strong>
+            <p>A factory installation can erase flash contents, including FFat-stored models or datasets. It is intended for the Waveshare ESP32-S3-Matrix, not other ESP32-S3 boards. Use compatible firmware and partitions.</p>
+          </div>
+
+          <div class="flash-installer-card">
+            <span class="micro-label">FIRMWARE · USB</span>
+            <h3>ESP32-S3 Matrix — packed INT8</h3>
+            <p id="firmwareInstallStatus" class="flash-status" role="status" aria-live="polite">Checking firmware availability…</p>
+            <div id="firmwareInstallControl" hidden>
+              <esp-web-install-button manifest="firmware/manifest.json">
+                <button type="button" slot="activate" class="primary flash-activate">Connect &amp; Install Firmware</button>
+                <span slot="unsupported">This browser does not support USB flashing. Try a recent desktop Chromium-based browser.</span>
+                <span slot="not-allowed">USB flashing needs HTTPS (or localhost) and permission to access the serial device.</span>
+              </esp-web-install-button>
+            </div>
+            <p class="flash-note">This installs the ESP32-S3 INT8 runtime. Neural-network models are trained in the browser and deployed separately over BLE in <strong>Deploy &amp; Infer</strong>.</p>
+          </div>
+
+          <div class="flash-troubleshoot">
+            <h3>Having trouble connecting?</h3>
+            <p>Use a USB data cable, disconnect any serial terminal, and reconnect the board. Some ESP32-S3 boards require entering download mode manually using BOOT and RESET. Reload this page after publishing a newer firmware binary.</p>
+            <p>For maintainers: read <a href="README_FIRMWARE_INSTALLER.md">firmware publishing instructions</a>. For application-only updates that preserve FFat, use the documented esptool command instead.</p>
+          </div>
+        </div>
+      </section>
     </main>
 
     <footer>
@@ -267,5 +313,6 @@
   <script src="js/ble.js?v=mode1-studio"></script>
   <script src="js/metrics.js?v=mode1-dual-precision-v2"></script>
   <script src="js/app.js?v=mode1-lpf5-class-delete-v1"></script>
+  <script src="js/firmware-installer.js?v=1"></script>
 </body>
 </html>

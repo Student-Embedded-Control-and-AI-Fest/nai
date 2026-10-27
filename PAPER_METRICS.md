@@ -6,6 +6,15 @@
 2. Select the input representation, FCN hidden layers, and epoch count, then train.
 3. In **Results & Curves**, review numeric validation accuracy, macro precision, macro recall, macro F1, weighted F1, per-class values, and the confusion matrix.
 4. Click **Export paper report (.zip)** to preserve CSVs, prediction-level evidence, split indices, training curves (PNG), and run metadata. Archive these alongside the dataset for reproducibility.
+5. Before final publication, run an independent subject/session-level evaluation separate from the tuning data, and report its metrics independently.
+
+## Suggested table columns
+
+| Representation | Topology | Train n | Validation n | Accuracy (%) | Macro precision | Macro recall | Macro F1 | Weighted F1 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Fill from the exported CSV | Fill from run_metadata.json | n | n | ... | ... | ... | ... | ... |
+
+The numbers displayed in the UI are placeholders until a real training run completes. No performance results are embedded in the application.
 
 ## Interpretation
 
