@@ -17,8 +17,16 @@ The complete gesture is then normalized to a fixed number of points, transformed
 - **Training Curves** — view train/validation loss and accuracy.
 - **Deploy & Infer** — save/deploy the NAI4 package, select device mode, then classify BOOT-delimited gestures on the ESP32-S3-Matrix.
 - **Flash Firmware** — first-time USB flashing of the ESP32-S3 INT8 runtime using ESP Web Tools.
+- **About the Board** — hardware introduction, video demonstration, Indonesian purchase link, and preprocessing guide for all five input kinds.
 
 There is no application server. TensorFlow.js training, dataset processing, NAI4 packaging, and BLE communication run in the browser.
+
+## Video demo and board resources
+
+- **[Watch the NoodleAI demo (demo.mp4)](https://github.com/Student-Embedded-Control-and-AI-Fest/nai/blob/main/demo.mp4)** — demonstration of the browser-to-device workflow.
+- **[Waveshare ESP32-S3-Matrix hardware guide](https://docs.waveshare.com/ESP32-S3-Matrix)** — board specifications, pinout, and examples.
+- **[CNC Store Bandung on Tokopedia](https://www.tokopedia.com/cncstorebandung/esp32-s3-development-board-dengan-rgb-led-matrix-wifi-bluetooth-sensor-gyroscope-qmi8658c-papan-pengembangan-iot-motion-control-1734224430143342142)** — a possible Indonesian seller; check current availability directly.
+- **[About / preprocessing guide](README_ABOUT_BOARD.md)** — the text companion to the final website tab.
 
 ## Hardware target
 

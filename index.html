@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#09111f">
   <meta name="description" content="NoodleAI Studio Mode 1 for ESP32-S3-Matrix: capture BOOT-delimited QMI8658 gestures, train locally, deploy NAI4 models, and run Noodle inference on-device.">
   <title>NoodleAI Studio · Mode 1</title>
-  <link rel="stylesheet" href="style.css?v=mode1-dual-precision-v2">
+  <link rel="stylesheet" href="style.css?v=mode1-about-guide-video-v1">
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
@@ -67,6 +67,7 @@
       <button class="tab" data-tab="curves"><span>03</span>Results &amp; Curves</button>
       <button class="tab" data-tab="deploy"><span>04</span>Deploy &amp; Infer</button>
       <button class="tab" data-tab="firmware"><span>05</span>Flash Firmware</button>
+      <button class="tab" data-tab="about"><span>06</span>About the Board</button>
     </nav>
 
     <main>
@@ -300,6 +301,94 @@
           </div>
         </div>
       </section>
+      <section id="tab-about" class="tab-page" aria-label="About the ESP32-S3 Matrix and NoodleAI preprocessing">
+        <div class="panel about-hero">
+          <div class="about-intro">
+            <div class="section-kicker">BOARD GUIDE · MODE 1</div>
+            <h2>Meet the ESP32-S3 Matrix</h2>
+            <p>The <strong>Waveshare ESP32-S3-Matrix</strong> is a compact microcontroller board with a built-in 6-axis motion sensor, an 8×8 RGB LED matrix, USB-C and wireless connectivity. NoodleAI uses it to recognize gestures without an external IMU or a computer running the neural network.</p>
+            <div class="about-stats" aria-label="Board specifications">
+              <div><strong>ESP32-S3</strong><span>Dual-core · up to 240 MHz</span></div>
+              <div><strong>QMI8658</strong><span>3-axis accel + 3-axis gyro</span></div>
+              <div><strong>8 × 8</strong><span>RGB LED matrix</span></div>
+              <div><strong>USB-C + BLE</strong><span>Flash by USB · deploy by Bluetooth</span></div>
+            </div>
+            <div class="about-actions">
+              <a class="about-action about-demo" href="https://github.com/Student-Embedded-Control-and-AI-Fest/nai/blob/main/demo.mp4" target="_blank" rel="noopener noreferrer">▶ &nbsp;Watch NoodleAI demo <span aria-hidden="true">↗</span></a>
+              <a class="about-action about-outline" href="https://docs.waveshare.com/ESP32-S3-Matrix" target="_blank" rel="noopener noreferrer">Waveshare documentation <span aria-hidden="true">↗</span></a>
+            </div>
+            <p class="about-help-text">The demo opens the project's <code>demo.mp4</code> on GitHub in a new tab.</p>
+          </div>
+          <div class="about-board-showcase" aria-label="Stylized illustration of the 8 by 8 LED matrix on the ESP32-S3 Matrix board">
+            <div class="about-board-art">
+              <div class="about-board-top"><span>ESP32-S3 MATRIX</span><span>8×8 RGB</span></div>
+              <div class="about-led-grid" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+              <div class="about-board-bottom"><span>BOOT • QMI8658</span><span>Wi-Fi + BLE</span></div>
+            </div>
+            <small>Stylized LED matrix illustration · see the official guide for the actual board and pinout</small>
+          </div>
+        </div>
+
+        <div class="about-two-col">
+          <div class="panel about-explainer">
+            <div class="section-kicker">HOW NOODLEAI WORKS</div>
+            <h3>Hold BOOT, move, release</h3>
+            <p>In Mode 1, pressing <strong>BOOT</strong> marks the beginning of a gesture. The onboard QMI8658 supplies six motion channels at a nominal <strong>50 Hz</strong>. Releasing BOOT ends the gesture and triggers inference.</p>
+            <div class="about-flow" aria-label="NoodleAI processing sequence">
+              <span>BOOT press</span><b>→</b><span>IMU samples</span><b>→</b><span>5 Hz LPF</span><b>→</b><span>Feature vector</span><b>→</b><span>Noodle MLP</span>
+            </div>
+            <p>Gestures can last different lengths. Each gesture is resampled to a fixed number of points (<strong>100 by default</strong>) so the MLP always receives the same number of inputs.</p>
+          </div>
+          <div class="panel about-explainer">
+            <div class="section-kicker">GETTING THE BOARD</div>
+            <h3>Documentation and availability</h3>
+            <p>The official Waveshare guide includes board pinouts, hardware resources and getting-started instructions. In Indonesia, you can also look for this board at <strong>CNC Store Bandung</strong> on Tokopedia.</p>
+            <div class="about-resource-list">
+              <a href="https://docs.waveshare.com/ESP32-S3-Matrix" target="_blank" rel="noopener noreferrer"><span><strong>Official hardware guide</strong><small>Waveshare · specs and pinout</small></span><span aria-hidden="true">↗</span></a>
+              <a href="https://www.tokopedia.com/cncstorebandung/esp32-s3-development-board-dengan-rgb-led-matrix-wifi-bluetooth-sensor-gyroscope-qmi8658c-papan-pengembangan-iot-motion-control-1734224430143342142" target="_blank" rel="noopener noreferrer"><span><strong>Find it in Indonesia</strong><small>CNC Store Bandung · Tokopedia</small></span><span aria-hidden="true">↗</span></a>
+              <a href="https://github.com/Student-Embedded-Control-and-AI-Fest/nai/blob/main/demo.mp4" target="_blank" rel="noopener noreferrer"><span><strong>Watch the gesture demo</strong><small>demo.mp4 · NoodleAI GitHub</small></span><span aria-hidden="true">↗</span></a>
+            </div>
+            <p class="about-help-text">Store availability, price and listing details can change. The store is an independent seller.</p>
+          </div>
+        </div>
+
+        <div class="panel about-processing">
+          <div class="section-head">
+            <div><div class="section-kicker">FEATURE GUIDE</div><h2>How each input representation is prepared</h2><p>These are the five choices available in <strong>Capture &amp; Train → Input representation</strong> for the NoodleAI Mode 1 firmware.</p></div>
+            <span class="mode-chip">LPF 5 Hz · Mode 1</span>
+          </div>
+          <div class="about-shared-steps">
+            <div><strong>1</strong><span>Raw IMU · nominal 50 Hz</span></div>
+            <div><strong>2</strong><span>First-order LPF · 5 Hz, reset each gesture</span></div>
+            <div><strong>3</strong><span>Time-normalize to N points where applicable</span></div>
+            <div><strong>4</strong><span>Apply representation-specific steps and training scaler</span></div>
+          </div>
+          <div class="about-table-wrap">
+            <table class="about-table">
+              <thead><tr><th scope="col">Input kind</th><th scope="col">Channels</th><th scope="col">After the 5 Hz LPF</th><th scope="col">MLP inputs<br>at N = 100</th></tr></thead>
+              <tbody>
+                <tr><th scope="row">Accelerometer <span class="about-code">ax, ay, az</span></th><td>3</td><td>Resample, then subtract <strong>each axis's mean over that gesture</strong>. Apply the training-derived StandardScaler.</td><td>300</td></tr>
+                <tr><th scope="row">Accel direction + magnitude <span class="about-code">ux, uy, uz, |a|</span></th><td>4</td><td>Resample filtered XYZ, then split into <strong>unit direction</strong> and <strong>total magnitude</strong>. No gesture centering. Only the magnitude channel is standardized.</td><td>400</td></tr>
+                <tr><th scope="row">Gyroscope <span class="about-code">gx, gy, gz</span></th><td>3</td><td>Use gyro readings corrected for startup bias (when calibration succeeds). Resample, center each axis independently, then apply StandardScaler.</td><td>300</td></tr>
+                <tr><th scope="row">Accel + Gyro <span class="about-code">ax, ay, az, gx, gy, gz</span></th><td>6</td><td>Filter all six channels, resample, center <strong>each of the six axes separately</strong>, then apply StandardScaler.</td><td>600</td></tr>
+                <tr><th scope="row">Estimated Velocity <span class="about-code">vx, vy, vz</span></th><td>3</td><td>Low-pass filter accelerometer and gyro; use <strong>Madgwick orientation</strong>, remove world-frame gravity, integrate acceleration and apply endpoint correction, then resample and standardize.</td><td>300</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="about-help-text">All channels use time-major ordering (all channels for time step 0, then all channels for time step 1, etc.). StandardScaler statistics are learned from <strong>training samples only</strong> and reused on the board. This table documents Mode 1; the continuous Mode 2 firmware has a different acquisition and conditioning contract.</p>
+          <div class="about-faq">
+            <details><summary>Does mean centering remove gravity?</summary><p>For a gesture held at roughly constant orientation, subtracting each accelerometer axis's gesture mean removes most of the stationary gravity offset. It does not compensate for gravity changes when the board rotates. This Mode 1 pipeline uses only the 5 Hz LPF before per-gesture centering.</p></details>
+            <details><summary>What exactly is Accel direction + magnitude?</summary><p>From the same low-pass-filtered and resampled acceleration vector <code>a = (ax,ay,az)</code>, calculate <code>m = sqrt(ax²+ay²+az²)</code> and use <code>(ax/m, ay/m, az/m, m)</code>. If <code>m ≤ 0.001 g</code>, set direction to <code>(0,0,0)</code> to avoid division by zero. At rest, magnitude is normally near 1 g; it is <em>total measured acceleration</em>, not a separate gravity sensor.</p></details>
+            <details><summary>Why do we still use StandardScaler?</summary><p>Filtering and centering prepare the physical signal; StandardScaler adjusts each feature using means and standard deviations estimated <em>across the training examples</em>. For direction + magnitude, the three unit-direction components are left unscaled, and only magnitude is standardized.</p></details>
+            <details><summary>Where does the neural network run?</summary><p>Training and evaluation run in your browser using TensorFlow.js. The browser sends an NAI4 model to the ESP32-S3 over Bluetooth LE. After BOOT release, the board constructs the same feature representation and performs Noodle inference locally.</p></details>
+          </div>
+        </div>
+
+        <div class="panel about-next">
+          <div><div class="section-kicker">TRY IT YOURSELF</div><h3>From a USB cable to your own gesture classifier</h3><p>Use <strong>Flash Firmware</strong> once, connect over BLE, collect examples, train a model, and deploy it. Watch the demonstration first if you'd like to see the full workflow.</p></div>
+          <div class="about-actions"><button class="secondary" type="button" id="aboutOpenFlashBtn">Open Flash Firmware</button><a class="about-action about-demo" href="https://github.com/Student-Embedded-Control-and-AI-Fest/nai/blob/main/demo.mp4" target="_blank" rel="noopener noreferrer">▶ &nbsp;Watch demo <span aria-hidden="true">↗</span></a></div>
+        </div>
+      </section>
     </main>
 
     <footer>
@@ -314,5 +403,10 @@
   <script src="js/metrics.js?v=mode1-dual-precision-v2"></script>
   <script src="js/app.js?v=mode1-lpf5-class-delete-v1"></script>
   <script src="js/firmware-installer.js?v=1"></script>
+  <script>
+    document.getElementById('aboutOpenFlashBtn')?.addEventListener('click', function () {
+      document.querySelector('[data-tab="firmware"]')?.click();
+    });
+  </script>
 </body>
 </html>
