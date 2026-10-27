@@ -7,7 +7,7 @@ if (!window.noodleBLE || !window.NoodleAIBLE || !window.NoodleMetrics) {
 
 
 const $=id=>document.getElementById(id);
-const REP_LABEL={accel:'Accelerometer',gyro:'Gyroscope','accel+gyro':'Accel + Gyro',quaternion:'Relative Quaternion',velocity:'Estimated Velocity','velocity+quaternion':'Velocity + Quaternion','accel+mag':'Accel + magnitude (Ax, Ay, Az, |a|)'};
+const REP_LABEL={accel:'Accelerometer',gyro:'Gyroscope','accel+gyro':'Accel + Gyro',quaternion:'Relative Quaternion',velocity:'Estimated Velocity','velocity+quaternion':'Velocity + Quaternion','accel+mag':'Accel + magnitude (Ax, Ay, Az, |a|) [legacy]','accel-dir+mag':'Accel direction + magnitude (unit XYZ, |a|)'};
 const MAX_CLASSES=10; // Keep in sync with NoodleAIModel::MAX_CLASSES in the ESP32 firmware.
 const state={
   labels:[],samples:[],rawSamples:[],targets:[],rawLengths:[],durationsMs:[],N:100,setupLocked:false,trainingInProgress:false,
@@ -36,8 +36,8 @@ function datasetObject(){
 function parseHidden(){const h=$('hiddenLayers').value.split(',').map(s=>s.trim()).filter(Boolean).map(Number);if(!h.length||h.some(v=>!Number.isInteger(v)||v<1||v>512))throw new Error('Hidden layers must be comma-separated integers from 1 to 512.');return h;}
 
 function selectedRep(){return $('representation').value;}
-function selectedDirectHplp(){return ['accel','gyro','accel+gyro','accel+mag'].includes(selectedRep()) && ($('directHplp').checked || selectedRep()==='accel+mag');}
-function refreshFilterControl(){const rep=selectedRep(),cb=$('directHplp');if(rep==='accel+mag'){cb.checked=true;cb.disabled=true;}else{cb.disabled=!['accel','gyro','accel+gyro'].includes(rep);}$('directHplpHint').textContent = rep==='accel+mag'?'Required for acceleration magnitude models.':cb.disabled?'Derived features use their existing gravity-preserving preprocessing.':'Checked: HPF→LPF on raw 50-Hz samples; no per-gesture centering. Unchecked: with per-gesture centering.';}
+function selectedDirectHplp(){return ['accel','gyro','accel+gyro','accel+mag','accel-dir+mag'].includes(selectedRep()) && ($('directHplp').checked || ['accel+mag','accel-dir+mag'].includes(selectedRep()));}
+function refreshFilterControl(){const rep=selectedRep(),cb=$('directHplp');const mag=['accel+mag','accel-dir+mag'].includes(rep);if(mag){cb.checked=true;cb.disabled=true;}else{cb.disabled=!['accel','gyro','accel+gyro'].includes(rep);}$('directHplpHint').textContent = mag?'Required: HPF→LPF before resampling; XYZ direction is zero when |a| ≤ 0.001 g.':cb.disabled?'Derived velocity uses its existing gravity-compensated preprocessing.':'Checked: HPF→LPF on raw 50-Hz samples; no per-gesture centering. Unchecked: with per-gesture centering.';}
 function updateInputAndTopology(){
   refreshFilterControl();
   state.N=Math.max(5,Math.min(500,Number($('normalizedLength').value)||100));
@@ -65,7 +65,7 @@ function refreshDataset(){
   $('rawDatasetStatus').textContent=n===0?'—':state.rawSamples.length===n?'available':'legacy only';
   const counts=Array(state.labels.length).fill(0);state.targets.forEach(y=>{if(y>=0&&y<counts.length)counts[y]++;});
   $('classCounts').innerHTML='';counts.forEach((c,i)=>{const s=document.createElement('span');s.className='class-pill';s.textContent=`${state.labels[i]}: ${c}`;$('classCounts').appendChild(s);});
-  $('trainBtn').disabled=!(state.setupLocked&&n>0)||state.trainingInProgress;
+  $('trainBtn').disabled=!(state.setupLocked&&state.labels.length>=2&&n>0)||state.trainingInProgress;
 }
 
 function invalidateModel(){if(state.model){try{state.model.dispose();}catch(_){}}state.model=null;state.scaler=null;state.pkg=null;state.int8Pkg=null;state.history=null;state.report=null;state.trainedRep=null;$('saveModelBtn').disabled=true;$('saveInt8Btn').disabled=true;$('quantResult').textContent='Train a model to evaluate INT8 quantization.';$('deployBtn').disabled=true;$('trainResult').textContent='';$('curveSummary').textContent='Train a model to see loss, accuracy, and validation metrics.';renderMetrics();drawTrainingCurves();}
@@ -84,7 +84,7 @@ function lockUi(locked){
   $('loadDatasetBtn').disabled=busy;
   $('recordLabel').disabled=!locked||busy;
   $('armRecordBtn').disabled=!locked||busy||!window.noodleBLE.connected;
-  $('trainBtn').disabled=!locked||busy||!state.targets.length;
+  $('trainBtn').disabled=!locked||busy||state.labels.length<2||!state.targets.length;
   $('downloadReportBtn').disabled=busy||!state.report;
 }
 
@@ -101,7 +101,7 @@ function notifyClassChange(action){
   lockUi(state.setupLocked);
   if(hadModel){
     $('trainResult').textContent='Classes changed — train again before deploying.';
-    log(`${action} Existing samples preserved; previous trained model invalidated. Retrain to update the output classes.`);
+    log(`${action} Remaining samples preserved; previous trained model invalidated. Retrain to update the output classes.`);
   }else log(action);
 }
 
@@ -122,20 +122,42 @@ $('addLabelBtn').addEventListener('click',()=>{
   notifyClassChange(`Added class “${label}” (${state.labels.length}/${MAX_CLASSES}).`);
 });
 $('labelEntry').addEventListener('keydown',e=>{if(e.key==='Enter'){$('addLabelBtn').click();e.preventDefault();}});
+// Remove a class together with all of its recorded gestures. The parallel arrays
+// are filtered by the SAME original row indices to keep .npz export aligned.
+function removeClassAndRecordings(classIndex){
+  if(classIndex<0||classIndex>=state.labels.length)return 0;
+  const n=state.targets.length;
+  if(state.samples.length!==n||state.rawLengths.length!==n||state.durationsMs.length!==n||
+     (state.rawSamples.length!==0&&state.rawSamples.length!==n)){
+    throw new Error('Dataset arrays are inconsistent; class deletion was cancelled to protect the recordings.');
+  }
+  const retained=[];
+  for(let row=0;row<n;row++)if(state.targets[row]!==classIndex)retained.push(row);
+  const deleted=n-retained.length;
+  state.samples=retained.map(row=>state.samples[row]);
+  if(state.rawSamples.length)state.rawSamples=retained.map(row=>state.rawSamples[row]);
+  state.rawLengths=retained.map(row=>state.rawLengths[row]);
+  state.durationsMs=retained.map(row=>state.durationsMs[row]);
+  state.targets=retained.map(row=>state.targets[row]>classIndex?state.targets[row]-1:state.targets[row]);
+  state.labels.splice(classIndex,1);
+  return deleted;
+}
+
 $('removeLabelBtn').addEventListener('click',()=>{
   if(!classEditAllowed())return;
   const i=$('labelList').selectedIndex;if(i<0)return;
   const label=state.labels[i];
-  if(state.targets.includes(i)){
-    alert(`“${label}” has recorded samples. This version protects recorded classes from deletion; use Reset to start a new dataset.`);
-    return;
-  }
-  state.labels.splice(i,1);
-  // Removing an unused class can shift indices of other classes. Keep targets aligned.
-  state.targets=state.targets.map(y=>y>i?y-1:y);
-  const nextRecordIndex=Math.min(i,state.labels.length-1);
-  refreshLabels(nextRecordIndex);
-  notifyClassChange(`Removed empty class “${label}”.`);
+  const n=state.targets.filter(target=>target===i).length;
+  if(n>0&&!confirm(`Remove class “${label}” and permanently delete its ${n} recorded sample(s)? Other classes and recordings will be kept.`))return;
+  try{
+    const deleted=removeClassAndRecordings(i);
+    const nextRecordIndex=Math.min(i,state.labels.length-1);
+    refreshLabels(nextRecordIndex);
+    notifyClassChange(`Removed class “${label}” and ${deleted} associated recording(s). ${state.targets.length} recording(s) remain.`);
+    $('recordProgress').textContent=state.labels.length
+      ?'Class removed. Select a remaining class to continue recording.'
+      :'All classes removed. Add a class to continue.';
+  }catch(err){alert(err.message);log(`Class removal ERROR: ${err.message}`);}
 });
 $('normalizedLength').addEventListener('input',updateInputAndTopology);$('representation').addEventListener('change',updateInputAndTopology);$('directHplp').addEventListener('change',updateInputAndTopology);$('hiddenLayers').addEventListener('input',updateInputAndTopology);
 
@@ -280,7 +302,7 @@ async function trainModel(){
     if(D>1536)throw new Error('Input dimension '+D+' exceeds firmware MAX_DIM=1536. Reduce normalized length.');
     const initialSplit=NAI.sklearnStratifiedSplit(ds.y,K,42);
     const split=window.NoodleMetrics.ensureClassCoverage(initialSplit,ds.y,K);
-    const scaler=NAI.fitScaler(rows,split.train);
+    const scaler=NAI.configureRepresentationScaler(NAI.fitScaler(rows,split.train),rep,ds.N);
     const Xtr=NAI.standardizeRows(rows,split.train,scaler),Xva=NAI.standardizeRows(rows,split.test,scaler);
     const ytr=Int32Array.from(split.train.map(i=>ds.y[i])),yva=Int32Array.from(split.test.map(i=>ds.y[i]));
     model=NAI.makeModel(D,hidden,K,split.train.length);

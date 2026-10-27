@@ -16,9 +16,12 @@ const REP = {
   'quaternion': { code: 4, channels: 4 },
   'velocity': { code: 5, channels: 3 },
   'velocity+quaternion': { code: 6, channels: 7 },
-  'accel+mag': { code: 7, channels: 4 },
+  'accel+mag': { code: 7, channels: 4 }, // legacy: filtered acceleration + magnitude
+  'accel-dir+mag': { code: 8, channels: 4 }, // unit direction + filtered magnitude
 };
 const CODE_TO_REP = Object.fromEntries(Object.entries(REP).map(([k,v]) => [v.code, k]));
+// Acceleration in g. Directions below this magnitude are set to zero, not amplified.
+const ACCEL_DIRECTION_EPS_G = 0.001;
 // ---------------------------------------------------------------------------
 // NPY / NPZ reader: enough for NoodleAI .npz datasets
 // ---------------------------------------------------------------------------
@@ -461,19 +464,28 @@ function buildRepresentationOne(ds, sampleIndex, rep, useFilter=false) {
   if (ds.rawRows) {
     const rawObj=ds.rawRows[sampleIndex];
     const raw=rawObj.data, T=rawObj.length;
-    if (rep==='accel'||rep==='gyro'||rep==='accel+gyro'||rep==='accel+mag') {
-      if (rep==='accel+mag' && !useFilter) throw new Error('Accel + magnitude requires HPF/LPF');
+    if (rep==='accel'||rep==='gyro'||rep==='accel+gyro'||rep==='accel+mag'||rep==='accel-dir+mag') {
+      if ((rep==='accel+mag'||rep==='accel-dir+mag') && !useFilter) throw new Error('Accel + magnitude requires HPF/LPF');
       const idx = rep==='gyro' ? [3,4,5] : rep==='accel+gyro' ? [0,1,2,3,4,5] : [0,1,2];
       const filtered = useFilter ? filterRaw6Hplp(raw,T,ds.sampleRate,idx) : raw;
       const selected=new Float32Array(T*idx.length);
       for(let r=0;r<T;r++) for(let c=0;c<idx.length;c++) selected[r*idx.length+c]=filtered[r*6+idx[c]];
       const xyz=resample(selected,T,idx.length,N);
-      if (rep==='accel+mag') {
+      if (rep==='accel+mag'||rep==='accel-dir+mag') {
         const out=new Float32Array(N*4);
         for (let r=0;r<N;r++) {
           const i=r*3,o=r*4,ax=xyz[i],ay=xyz[i+1],az=xyz[i+2];
-          out[o]=ax;out[o+1]=ay;out[o+2]=az;
-          out[o+3]=Math.fround(Math.sqrt(ax*ax+ay*ay+az*az));
+          const m=Math.fround(Math.sqrt(ax*ax+ay*ay+az*az));
+          if (rep==='accel-dir+mag') {
+            // A filtered gesture can contain zero/near-zero acceleration.
+            // Preserve measured magnitude; suppress unstable unit directions.
+            const inv=(Number.isFinite(m)&&m>ACCEL_DIRECTION_EPS_G)?1/m:0;
+            out[o]=Math.fround(ax*inv);out[o+1]=Math.fround(ay*inv);out[o+2]=Math.fround(az*inv);
+            out[o+3]=Number.isFinite(m)?m:0;
+          } else {
+            // Backward-compatible representation ID 7: unnormalized XYZ + |a|.
+            out[o]=ax;out[o+1]=ay;out[o+2]=az;out[o+3]=m;
+          }
         }
         return out;
       }
@@ -491,7 +503,7 @@ function buildRepresentationOne(ds, sampleIndex, rep, useFilter=false) {
     return normalizeQuatRows(resample(both,d.T,7,N),N,3,7);
   }
 
-  if (useFilter || rep==='accel+mag') throw new Error('HPF/LPF and acceleration magnitude require original raw six-axis samples. Record or load a dataset with raw_data/raw_offsets.');
+  if (useFilter || rep==='accel+mag' || rep==='accel-dir+mag') throw new Error('HPF/LPF and acceleration magnitude require original raw six-axis samples. Record or load a dataset with raw_data/raw_offsets.');
   // Legacy NAI3 datasets contain the already resampled + per-channel-centered
   // six-axis vector. Raw sensor representations can still be projected exactly.
   if (rep==='quaternion'||rep==='velocity'||rep==='velocity+quaternion') {
@@ -535,6 +547,21 @@ function fitScaler(rows, trainIdx) {
     scale[j]=(Number.isFinite(s)&&s>1e-12)?s:1.0;
   }
   return {mean,scale};
+}
+
+// Preserve unit XYZ direction at the actual FCN input for NAI4 rep 8.
+// Only channel 3 (filtered magnitude in g) is standardized; legacy reps unchanged.
+function configureRepresentationScaler(scaler, rep, N) {
+  if (rep==='accel-dir+mag') {
+    if (scaler.mean.length!==N*4 || scaler.scale.length!==N*4) {
+      throw new Error('Direction + magnitude scaler must have 4*N features');
+    }
+    for (let t=0;t<N;t++) for (let c=0;c<3;c++) {
+      scaler.mean[4*t+c]=0;
+      scaler.scale[4*t+c]=1;
+    }
+  }
+  return scaler;
 }
 
 function standardizeRows(rows, indices, scaler) {
@@ -1155,7 +1182,7 @@ window.NAI = Object.freeze({
   loadNpz, parseDatasetArrays, buildDatasetNpzBlob,
   resample, centerColumns, normalizeRawSixAxis,
   sklearnStratifiedSplit, buildRepresentationDataset,
-  fitScaler, standardizeRows, flattenRows,
+  fitScaler, configureRepresentationScaler, standardizeRows, flattenRows,
   makeModel, predictTf, accuracy,
   exportNai4, exportNai4Int8, loadNai, predictNai, predictQuantized,
   _internals:Object.freeze({makeNpyHeader,npyF32,npyI32,npyUnicode,parseNpy,MT19937,makeCfg,parseCfg}),
