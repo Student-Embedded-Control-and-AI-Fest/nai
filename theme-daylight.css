@@ -1,0 +1,127 @@
+/* NoodleAI Daylight — a brighter, accessible visual treatment.
+   Only presentation changes: no IMU, training, deployment, or viewer logic changed.
+   Loaded AFTER style.css to preserve the established layout and interactions. */
+:root {
+  color-scheme: light;
+  --ink: #203149;
+  --muted: #63768c;
+  --muted-2: #8190a2;
+  --navy: #eef5fa;
+  --navy-2: #dcebf5;
+  --panel: #ffffff;
+  --panel-strong: #ffffff;
+  --line: #dbe7ee;
+  --line-soft: #e9f0f4;
+  --accent: #326ae6;
+  --accent-2: #14a99a;
+  --accent-dark: #3265bc;
+  --accent-soft: #eaf2ff;
+  --mint: #16a897;
+  --danger: #e45862;
+  --warning: #eab157;
+  --shadow: 0 12px 35px rgba(38, 73, 107, .065), 0 2px 8px rgba(46, 73, 99, .035);
+  --shadow-soft: 0 4px 15px rgba(46, 73, 99, .045);
+}
+html { background: #f4f8fc; }
+body {
+  color: var(--ink);
+  background: linear-gradient(153deg,#fbfdff 0%,#f2f8fd 45%,#f6fbf8 100%);
+}
+body:before { opacity: .38; background-image: radial-gradient(circle at 1px 1px,rgba(57,109,165,.10) 1px,transparent 0); mask-image:linear-gradient(to bottom,#000,transparent 86%); }
+.ambient { opacity: .11; filter: blur(95px); }
+.ambient-a { background: #7bb8ef; }
+.ambient-b { background: #72d7bd; }
+.app-shell { max-width: 1420px; }
+
+/* Brand and top status strip */
+.app-header { color: #20334c; padding-top: 9px; }
+.brand-mark { transform: rotate(-3deg); background:linear-gradient(135deg,#2baac0,#4376ed); box-shadow:0 10px 23px rgba(46,115,191,.16); }
+.brand-mark span { color: white; }
+.eyebrow { color: #148b8a; }
+.app-header h1 span { color: #4274df; }
+.app-header p { color: #657a8f; }
+.hardware-line { color: #6c7f91; }
+.hardware-line i { background: #a3b4c5; }
+.badge { color:#147b71; border-color:#c3e8df; background:#eafaf6; backdrop-filter:none; }
+.badge:before { background:#20b6a3; box-shadow:0 0 0 4px rgba(32,182,163,.11); }
+.badge-muted { color:#667c91; border-color:#d8e4ed; background:#eef3f7; }
+.badge-muted:before { background:#97aabb; box-shadow:none; }
+.device-strip {
+  background:rgba(255,255,255,.94);
+  color:#253c54;
+  border:1px solid #dbe8f0;
+  box-shadow:var(--shadow);
+  backdrop-filter: blur(8px);
+}
+.device-main .micro-label, .sensor-reading span:not(.sensor-icon), .boot-reading span:not(.boot-icon) { color: #73869a; }
+.device-main span:last-child { color:#7d90a2; }
+.sensor-reading,.boot-reading { border-color:#e4edf4; }
+.sensor-reading strong,.boot-reading strong { color:#263b54; }
+.boot-reading.active strong { color:#c95847; }
+.sensor-icon { background:#dff8ed; color:#137961; }
+.gyro-reading .sensor-icon { background:#e9e9ff; color:#545fba; }
+.boot-icon { background:#fff0da; color:#a56617; box-shadow:none; }
+.connect-button:before { background:#fff; }
+
+/* Workspace navigation */
+.tabs { border:1px solid #deebf2; background:#eaf2f7; box-shadow: 0 2px 7px rgba(36,68,98,.03); }
+.tab { color:#627992; }
+.tab span { color:#91a3b4; }
+.tab:hover { color:#2768a6; background:#fff; }
+.tab.active { background:#fff; color:#245bb5; box-shadow:0 3px 12px rgba(52,91,133,.13); }
+.tab.active span { color:#1b948d; }
+.tab:focus-visible, button:focus-visible, summary:focus-visible, a:focus-visible { outline:3px solid rgba(39,123,209,.42); outline-offset:2px; }
+
+/* Spacious, quiet panels with readable controls */
+.panel { background:#fff; border:1px solid #e0eaf1; border-radius:18px; box-shadow:var(--shadow); }
+.section-kicker { color:#197e9b; }
+.step { background:#e8f2ff; color:#3571cf; box-shadow:none; }
+.primary { color:#fff; background:linear-gradient(115deg,#306bdc,#249cc0); box-shadow:0 6px 15px rgba(42,113,204,.15); }
+.primary:hover:not(:disabled) { box-shadow:0 8px 19px rgba(42,113,204,.22); }
+.secondary,.inference-button { color:#2861b3; background:#eaf2ff; border:1px solid #d6e6fb; box-shadow:none; }
+.secondary:hover:not(:disabled),.inference-button:hover:not(:disabled) { background:#dceafe; }
+.ghost { background:#f0f5f8; color:#55718a; }
+.ghost:hover:not(:disabled) { background:#e4eff5; }
+.mode-button { background:#e9f3f4; color:#297880; }
+button:disabled { opacity:.48; }
+input,select { border-color:#d4e2eb; background:#fff; color:#253b54; }
+input:focus, select:focus { border-color:#4a90c9; box-shadow:0 0 0 3px rgba(67,145,202,.14); }
+.capture-hero { background:linear-gradient(105deg,#e9f7ff,#e8f8f3); color:#22465b; border:1px solid #d8eceb; box-shadow:none; }
+.capture-copy span { color:#5f8295; }
+.boot-key { background:linear-gradient(#fff,#f2f8fb); box-shadow:0 4px 0 #c8dae3,0 7px 14px rgba(39,88,120,.08); }
+.boot-flow { background:linear-gradient(130deg,#f4f9ff,#f0fbf6); border-color:#dcecf3; }
+.boot-flow>div span { background:#dceeff; color:#286ac0; }
+.chart-card { border-color:#e0eaf1; }
+canvas { background:linear-gradient(180deg,#fff,#f9fcff); }
+
+/* Make the prediction card feel integrated instead of like a dark dashboard */
+.prediction-panel {
+  background:linear-gradient(145deg,#eff8ff 0%,#f6fbff 50%,#eafbf5 100%);
+  color:#203c55;
+  border-color:#d8e8f1;
+}
+.prediction-panel:before { border-color:rgba(72,155,201,.19); box-shadow:0 0 0 36px rgba(74,169,213,.055),0 0 0 72px rgba(62,189,155,.035); }
+.prediction-top .micro-label { color:#7890a3; }
+.live-pill { color:#168374; background:#e0f7ee; border-color:#beeadd; }
+.live-pill i { background:#25b49c; box-shadow:0 0 0 4px rgba(37,180,156,.12); }
+.prediction-ring { background:rgba(255,255,255,.92); border-color:#cfe6f1; box-shadow:inset 0 1px 0 #fff,0 11px 24px rgba(49,111,157,.10); }
+.prediction-label { color:#255b96; }
+.prediction-confidence { color:#178c7d; }
+.prediction-meta { color:#708ba1; }
+pre#log { background:#f5f9fc; color:#3e5b71; border-color:#dfeaf1; box-shadow:none; }
+
+/* Board showcase and study-themed highlights */
+.about-board-showcase { background:linear-gradient(140deg,#eaf5ff,#ecfaf5); color:#446780; box-shadow:none; border:1px solid #dbeaf2; }
+.about-board-showcase small { color:#688699; }
+.about-board-photo-card { box-shadow:0 11px 27px rgba(40,77,113,.13); }
+.about-demo { color:#fff; background:#2976bf; box-shadow:0 6px 16px rgba(45,109,188,.12); }
+.about-demo:hover { background:#1d63a5; }
+.flash-step-number { background:#e2efff; color:#3970c1; }
+.about-shared-steps strong { background:#dcecff; color:#3970c1; }
+
+/* Preserve plot colors and locking behavior; only cards/background are restyled. */
+.viewer-lock { background:#eaf8f2; }
+.viewer-orientation { background:#fcfffd; }
+.viewer-panel .viewer-graphs .chart-card { box-shadow:0 3px 12px rgba(34,91,123,.035); }
+footer,footer span:first-child { color:#7b8fa2; }
+@media (prefers-reduced-motion: reduce) { button,.about-action { transition:none; } }
