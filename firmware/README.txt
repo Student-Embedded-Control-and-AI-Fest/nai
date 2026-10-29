@@ -1,4 +1,4 @@
-NoodleAI ESP32-S3 Matrix — LPF5 Firmware
+NoodleAI ESP32-S3 Matrix — gyro HPF0.5 + LPF5 Firmware
 ========================================
 
 Use with matching NoodleAI Mode 1 Web. See README_DIRECTION_MAGNITUDE.md
@@ -10,8 +10,8 @@ resampling to the model's normalized length (usually 100).
 
 Input representations (NAI4):
 1 accel             (3 channels), LPF5 then per-gesture mean centering
-2 gyro              (3 channels), LPF5 then per-gesture mean centering
-3 accel+gyro        (6 channels), LPF5 then per-gesture mean centering
+2 gyro              (3 channels), gyro HPF0.5 then LPF5 then per-gesture mean centering
+3 accel+gyro        (6 channels), gyro HPF0.5 then LPF5, accel LPF5 then per-gesture mean centering
 5 velocity          (3 channels), gesture-local LPF5 accel + continuous Madgwick gravity compensation
 9 accel-dir+mag     (4 channels), LPF5 unit direction + magnitude; no centering
 10 accel+roll+pitch (5 channels), LPF5 acceleration + continuous Madgwick roll/pitch; no centering
@@ -24,7 +24,8 @@ Continuous Madgwick is initialized once after boot and updated between BOOT hold
 New model exports use the 0x0010 continuous-orientation flag, and raw dataset
 exports include aligned device quaternion samples. See README_CONTINUOUS_MADGWICK.md.
 
-Models require NAI4 version 4 with LPF5 flag 0x0008; older packages cannot
+Models require NAI4 version 4 with LPF5 flag 0x0008; gyro/accel+gyro
+models also require HPF0.5 flag 0x0020. Older incompatible packages cannot
 be loaded, and must be retrained/exported. Existing raw NPZ gesture data
 with raw_data/raw_offsets can be reused for retraining.
 

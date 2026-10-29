@@ -6,6 +6,7 @@
 #include <SensorQMI8658.hpp>
 #include "nai_gyro_calibration.h"
 #include "nai_motion_lpf5.h"
+#include "nai_motion_gyro_hpf05.h"
 #include <Adafruit_NeoPixel.h>
 
 #include <BLEDevice.h>
@@ -1091,8 +1092,10 @@ static bool buildInferenceRepresentation(uint16_t rawSamples) {
     const uint8_t channels = static_cast<uint8_t>(model.channelCount());
     const auto rep = model.representation();
 
-    // Identical filtering policy for every supported representation:
-    // 5-Hz LPF on raw IMU samples, reset to the first sample per BOOT gesture.
+    // Direct gyro classification: startup bias correction (already applied at
+    // acquisition) -> 0.5-Hz HPF -> 5-Hz LPF. The HPF resets per gesture.
+    // The continuous Madgwick path is updated at acquisition and is NEVER HPF'd.
+    // Acceleration and derived inputs keep the existing LPF5 processing.
     const bool derived = (rep == NoodleAIModel::REP_QUATERNION ||
                           rep == NoodleAIModel::REP_VELOCITY ||
                           rep == NoodleAIModel::REP_VELOCITY_QUATERNION ||
@@ -1100,6 +1103,12 @@ static bool buildInferenceRepresentation(uint16_t rawSamples) {
     const bool accel = (rep != NoodleAIModel::REP_GYRO);
     const bool gyro = (rep == NoodleAIModel::REP_GYRO ||
                        rep == NoodleAIModel::REP_ACCEL_GYRO || derived);
+    const bool directGyro = (rep == NoodleAIModel::REP_GYRO ||
+                             rep == NoodleAIModel::REP_ACCEL_GYRO);
+    if (directGyro) {
+        nai_filter_raw6_gyro_hpf05(gestureRaw, rawSamples,
+                                   static_cast<float>(model.sampleRateHz()));
+    }
     nai_filter_raw6_lpf5(gestureRaw, rawSamples,
                          static_cast<float>(model.sampleRateHz()), accel, gyro);
     if (!derived) {
@@ -1116,8 +1125,8 @@ static bool buildInferenceRepresentation(uint16_t rawSamples) {
             float gestureMean[7];
             centerNormalizedGesture(inferenceWindow, normalized, channels, gestureMean);
         }
-        Serial.printf("REP raw=%s LPF5 %s; normalized=%u channels=%u input=%u\n",
-                      model.representationName(),
+        Serial.printf("REP raw=%s %s %s; normalized=%u channels=%u input=%u\n",
+                      model.representationName(), directGyro ? "gyro-HPF0.5+LPF5" : "LPF5",
                       rep==NoodleAIModel::REP_ACCEL_DIR_MAG ? "unit-dir+mag" : "centered",
                       (unsigned)normalized,(unsigned)channels,(unsigned)model.inputDim());
         return true;
@@ -1357,7 +1366,7 @@ void setup() {
                   (unsigned)TRAIN_SAMPLE_RATE_HZ,
                   (unsigned)MIN_GESTURE_SAMPLES,
                   (unsigned)MAX_GESTURE_SAMPLES);
-    Serial.println("NAI4 LPF5 reps: accel | gyro | accel+gyro | accel-dir+mag | velocity");
+    Serial.println("NAI4 preprocessing: direct gyro uses HPF0.5->LPF5; accel and derived use LPF5");
     Serial.println("Derived reps: continuous 6-axis Madgwick (initialized once) + per-gesture velocity reset; LPF5 and StandardScaler");
     Serial.printf("Training BLE: up to %u samples/notification (count-aware final packet)\n",
                   (unsigned)TRAIN_BLE_BATCH_SIZE);

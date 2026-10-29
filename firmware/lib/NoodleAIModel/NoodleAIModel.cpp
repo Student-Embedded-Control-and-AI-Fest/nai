@@ -10,6 +10,7 @@ constexpr uint16_t MODEL_VERSION = 4;
 constexpr uint16_t FLAG_BINARY_CLASSIFIER = 0x0001;
 constexpr uint16_t FLAG_LPF5 = 0x0008;
 constexpr uint16_t FLAG_CONT_ORIENTATION = 0x0010;
+constexpr uint16_t FLAG_GYRO_HPF05 = 0x0020;
 constexpr uint16_t FLAG_INT8 = 0x0002;
 constexpr const char *ACTIVE_FILE = "nai_active";
 constexpr const char *CFG_FILE = "cfg.bin";
@@ -142,10 +143,18 @@ bool NoodleAIModel::readConfig(char slot) {
 #else
     if (packageInt8) { f.close(); return false; }
 #endif
-    // Reject missing LPF5 marker, former HPF packages and unknown flags.
+    // LPF5 is mandatory. Direct-gyro models require the explicit new
+    // HPF0.5 flag so that old gyro models are never run with new filtering.
+    // Other representations must not set it; their preprocessing is unchanged.
     if (!(h.flags & FLAG_LPF5) ||
-        (h.flags & ~(FLAG_BINARY_CLASSIFIER | FLAG_INT8 | FLAG_LPF5 | FLAG_CONT_ORIENTATION))) {
-        f.close();return false;
+        (h.flags & ~(FLAG_BINARY_CLASSIFIER | FLAG_INT8 | FLAG_LPF5 |
+                     FLAG_CONT_ORIENTATION | FLAG_GYRO_HPF05))) {
+        f.close(); return false;
+    }
+    const bool directGyro = (parsedRepresentation == REP_GYRO ||
+                             parsedRepresentation == REP_ACCEL_GYRO);
+    if (((h.flags & FLAG_GYRO_HPF05) != 0) != directGyro) {
+        f.close(); return false;
     }
     _binaryClassifier = (h.flags & FLAG_BINARY_CLASSIFIER) != 0;
     _continuousOrientation = (h.flags & FLAG_CONT_ORIENTATION) != 0;

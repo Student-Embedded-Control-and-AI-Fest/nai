@@ -29,3 +29,7 @@ Existing raw-only `.npz` datasets can still train direct IMU representations, bu
 Sources updated and JavaScript syntax + synthetic feature tests passed. **PlatformIO compilation and hardware tests were not run here** because the required target platform and local Noodle library checkout are unavailable in this environment. Before deployment, compile and upload the new firmware and verify BLE 208-byte notifications and agreement of training/inference features. The web installer currently references a **legacy factory `.bin`**, which does not implement the new protocol; rebuild and republish that binary separately.
 
 For gyroscope bias calibration, keep the board stationary during initial boot. Absolute tilt is gravity-referenced, but yaw is not observable from a six-axis IMU and remains relative/drift-prone. Accelerometer-based tilt may be disturbed by large linear accelerations.
+
+## Direct gyro classifier HPF0.5 update
+
+Only the direct `gyro` / `accel+gyro` representations now use per-gesture 0.5 Hz HPF on gX,gY,gZ, applied before their 5 Hz LPF. The Madgwick orientation pipeline (startup bias-corrected gyro + 5 Hz LPF) is **unchanged**. The new NAI4 gyro models must carry flag `0x0020`; retrain/re-export old gyro models.
