@@ -27,9 +27,9 @@ static constexpr int PIN_BOOT = 0;
 static constexpr uint32_t BOOT_TRAIN_WINDOW_MS = 1200;
 static constexpr uint32_t BOOT_DEBOUNCE_MS = 60;
 static constexpr uint32_t RUNTIME_BOOT_DEBOUNCE_MS = 30;
-// Six-axis acquisition is sampled by software at 50 Hz. BLE always streams all
-// six QMI8658 channels in batches of five so the GUI can plot and record the
-// same raw data regardless of which channels the deployed model selects.
+// Six-axis acquisition is sampled by software at 50 Hz. BLE streams raw
+// six-axis values PLUS the continuously estimated absolute quaternion, so
+// browser training and device inference use the same orientation timeline.
 static constexpr uint16_t TRAIN_SAMPLE_RATE_HZ = 50;
 static constexpr uint8_t TRAIN_BLE_BATCH_SIZE = 5;
 static constexpr uint32_t TRAIN_SAMPLE_PERIOD_MS = 1000 / TRAIN_SAMPLE_RATE_HZ;
@@ -73,9 +73,10 @@ struct ImuSample {
     float gx;
     float gy;
     float gz;
+    float qw, qx, qy, qz; // continuous gravity-referenced Madgwick quaternion
 };
 
-// 128 bytes: t0_ms (4) + count (1) + pad (3) + 5*6*float32 (120).
+// 208 bytes: t0_ms (4) + count (1) + pad (3) + 5*10*float32 (200).
 // MTU is requested as 247, so one notification can carry a complete batch.
 struct ImuPacket {
     uint32_t t0_ms;
@@ -85,7 +86,7 @@ struct ImuPacket {
 };
 #pragma pack(pop)
 
-static_assert(sizeof(ImuPacket) == 128, "ImuPacket must remain exactly 128 bytes");
+static_assert(sizeof(ImuPacket) == 208, "ImuPacket must remain exactly 208 bytes");
 
 SensorQMI8658 qmi;
 
@@ -120,7 +121,8 @@ DeviceMode mode = DeviceMode::TRAINING;
 // press/release, then resampled into the fixed model input length. Parameters
 // remain in FFat; only raw gesture + normalized input + Noodle activations use SRAM.
 float *gestureRaw = nullptr;
-float *derivedRaw = nullptr;      // only allocated for quaternion/velocity representations
+float *derivedRaw = nullptr;      // allocated only for derived representations
+float *gestureQuat = nullptr;     // captured continuous orientation, [T,4]
 float *inferenceWindow = nullptr;
 uint32_t lastSampleMs = 0;
 
@@ -240,21 +242,25 @@ static bool representationNeedsDerivedBuffer() {
     const auto rep = model.representation();
     return rep == NoodleAIModel::REP_QUATERNION ||
            rep == NoodleAIModel::REP_VELOCITY ||
-           rep == NoodleAIModel::REP_VELOCITY_QUATERNION;
+           rep == NoodleAIModel::REP_VELOCITY_QUATERNION ||
+           rep == NoodleAIModel::REP_ACCEL_ROLL_PITCH;
 }
 
 static bool inferenceBuffersReady() {
     if (!gestureRaw || !inferenceWindow) return false;
     if (representationNeedsDerivedBuffer() && !derivedRaw) return false;
+    if (representationNeedsDerivedBuffer() && model.continuousOrientation() && !gestureQuat) return false;
     return true;
 }
 
 static void rebuildInferenceWindow() {
     delete[] gestureRaw;
     delete[] derivedRaw;
+    delete[] gestureQuat;
     delete[] inferenceWindow;
     gestureRaw = nullptr;
     derivedRaw = nullptr;
+    gestureQuat = nullptr;
     inferenceWindow = nullptr;
     resetGestureState();
 
@@ -273,14 +279,18 @@ static void rebuildInferenceWindow() {
     inferenceWindow = new (std::nothrow) float[model.inputDim()];
     if (representationNeedsDerivedBuffer()) {
         derivedRaw = new (std::nothrow) float[MAX_GESTURE_SAMPLES * channels];
+        if (model.continuousOrientation())
+            gestureQuat = new (std::nothrow) float[MAX_GESTURE_SAMPLES * 4u];
     }
 
     if (!inferenceBuffersReady()) {
         delete[] gestureRaw;
         delete[] derivedRaw;
+        delete[] gestureQuat;
         delete[] inferenceWindow;
         gestureRaw = nullptr;
         derivedRaw = nullptr;
+        gestureQuat = nullptr;
         inferenceWindow = nullptr;
         sendStatus("ERR:RAM");
     }
@@ -657,20 +667,6 @@ static void flushTrainingPacket() {
     trainingPacket.count = 0;
 }
 
-static void streamImuSample(float ax, float ay, float az,
-                            float gx, float gy, float gz, uint32_t now) {
-    // Keep the live BLE path identical to the previously working six-axis
-    // firmware. Pause only while FFat deployment owns the BLE link.
-    if (deploy.active || !bleConnected || !imuCharacteristic) return;
-
-    if (trainingBatchIndex == 0) trainingPacket.t0_ms = now;
-    ImuSample &dst = trainingPacket.samples[trainingBatchIndex];
-    dst.ax = ax; dst.ay = ay; dst.az = az;
-    dst.gx = gx; dst.gy = gy; dst.gz = gz;
-    ++trainingBatchIndex;
-
-    if (trainingBatchIndex >= TRAIN_BLE_BATCH_SIZE) flushTrainingPacket();
-}
 
 static uint8_t rawAxisForRepresentationChannel(uint8_t modelChannel) {
     switch (model.representation()) {
@@ -869,6 +865,59 @@ static Quaternion madgwickUpdateImu(Quaternion q,
     return qNormalize(q);
 }
 
+// One continuous orientation estimator shared by training, inference and all
+// derived input kinds. BOOT changes gesture capture only; it never resets q.
+static Quaternion s_orientation{1.0f, 0.0f, 0.0f, 0.0f};
+static float s_orientationLpf[6]{};
+static bool s_orientationInitialized = false;
+
+static void updateContinuousOrientation(float ax, float ay, float az,
+                                        float gx, float gy, float gz) {
+    const float in[6]{ax,ay,az,gx,gy,gz};
+    if (!s_orientationInitialized) {
+        for (uint8_t c=0;c<6;++c) s_orientationLpf[c] = in[c];
+        s_orientation = quatAlignAccelToWorldZ(ax,ay,az);
+        s_orientationInitialized = true;
+        return;
+    }
+    constexpr float dt = 1.0f / TRAIN_SAMPLE_RATE_HZ;
+    const float tau = 1.0f / (2.0f * 3.14159265358979323846f * 5.0f);
+    const float gain = dt / (tau + dt);
+    for (uint8_t c=0;c<6;++c)
+        s_orientationLpf[c] += gain * (in[c] - s_orientationLpf[c]);
+    s_orientation = madgwickUpdateImu(s_orientation,
+        s_orientationLpf[0],s_orientationLpf[1],s_orientationLpf[2],
+        s_orientationLpf[3],s_orientationLpf[4],s_orientationLpf[5],dt);
+}
+
+// Standard ZYX Euler angles from a sensor-to-world quaternion. Yaw is
+// deliberately not included in the new five-channel representation.
+static void rollPitchFromQuaternion(const Quaternion &q,float &roll,float &pitch) {
+    roll = atan2f(2.0f*(q.w*q.x + q.y*q.z),
+                  1.0f-2.0f*(q.x*q.x + q.y*q.y));
+    const float sine = 2.0f*(q.w*q.y - q.z*q.x);
+    pitch = asinf(fmaxf(-1.0f,fminf(1.0f,sine)));
+}
+
+static void streamImuSample(float ax, float ay, float az,
+                            float gx, float gy, float gz, uint32_t now) {
+    // Keep the live BLE path identical to the previously working six-axis
+    // firmware. Pause only while FFat deployment owns the BLE link.
+    if (deploy.active || !bleConnected || !imuCharacteristic) return;
+
+    if (trainingBatchIndex == 0) trainingPacket.t0_ms = now;
+    ImuSample &dst = trainingPacket.samples[trainingBatchIndex];
+    dst.ax = ax; dst.ay = ay; dst.az = az;
+    dst.gx = gx; dst.gy = gy; dst.gz = gz;
+    dst.qw=s_orientation.w;dst.qx=s_orientation.x;dst.qy=s_orientation.y;dst.qz=s_orientation.z;
+    ++trainingBatchIndex;
+
+    if (trainingBatchIndex >= TRAIN_BLE_BATCH_SIZE) flushTrainingPacket();
+}
+
+
+// The gyro bias is calibrated once at startup; this function is never invoked
+// by a BOOT event or a BLE training/inference mode change.
 static void storeDerivedSample(float *out, uint16_t k,
                                const Quaternion &qRel,
                                float vx, float vy, float vz) {
@@ -892,6 +941,69 @@ static void storeDerivedSample(float *out, uint16_t k,
     default:
         break;
     }
+}
+
+// Continuous-orientation NAI4 representations: quaternion samples were
+// estimated at acquisition time (including the intervals between gestures).
+// Only velocity integration is restarted for each BOOT-delimited gesture.
+static bool buildContinuousRawRepresentation(const float *raw6,
+                                              const float *quat4,
+                                              uint16_t rawSamples, float *out) {
+    if (!raw6 || !quat4 || !out || rawSamples < 2) return false;
+    const auto rep = model.representation();
+    const uint8_t channels = static_cast<uint8_t>(model.channelCount());
+    const float dt = 1.0f / TRAIN_SAMPLE_RATE_HZ;
+    float axPrev=0.0f, ayPrev=0.0f, azPrev=0.0f;
+    float vx=0.0f, vy=0.0f, vz=0.0f;
+    Quaternion prevQ{1,0,0,0};
+    for (uint16_t k=0;k<rawSamples;++k) {
+        const uint16_t r=k*6u, qi=k*4u, d=k*channels;
+        Quaternion q=qNormalize({quat4[qi],quat4[qi+1],quat4[qi+2],quat4[qi+3]});
+        if (k>0 && qDot(q,prevQ)<0) {
+            q.w=-q.w;q.x=-q.x;q.y=-q.y;q.z=-q.z;
+        }
+        prevQ=q;
+        if (rep == NoodleAIModel::REP_ACCEL_ROLL_PITCH) {
+            out[d]=raw6[r];out[d+1]=raw6[r+1];out[d+2]=raw6[r+2];
+            rollPitchFromQuaternion(q,out[d+3],out[d+4]);
+            continue;
+        }
+        if (rep == NoodleAIModel::REP_QUATERNION ||
+            rep == NoodleAIModel::REP_VELOCITY_QUATERNION) {
+            const uint8_t o = rep == NoodleAIModel::REP_QUATERNION ? 0u : 3u;
+            out[d+o]=q.w;out[d+o+1]=q.x;out[d+o+2]=q.y;out[d+o+3]=q.z;
+        }
+        if (rep == NoodleAIModel::REP_VELOCITY ||
+            rep == NoodleAIModel::REP_VELOCITY_QUATERNION) {
+            float awx,awy,awz;
+            qRotate(q,raw6[r],raw6[r+1],raw6[r+2],awx,awy,awz);
+            const float axNow=awx*GRAVITY_MPS2;
+            const float ayNow=awy*GRAVITY_MPS2;
+            const float azNow=(awz-1.0f)*GRAVITY_MPS2;
+            if (k>0) {
+                vx+=0.5f*(axPrev+axNow)*dt;
+                vy+=0.5f*(ayPrev+ayNow)*dt;
+                vz+=0.5f*(azPrev+azNow)*dt;
+            }
+            axPrev=axNow;ayPrev=ayNow;azPrev=azNow;
+            out[d]=vx;out[d+1]=vy;out[d+2]=vz;
+        }
+    }
+    if (rep == NoodleAIModel::REP_VELOCITY ||
+        rep == NoodleAIModel::REP_VELOCITY_QUATERNION) {
+        const uint16_t end = (rawSamples-1u)*channels;
+        const float endVx=out[end],endVy=out[end+1],endVz=out[end+2];
+        for (uint16_t k=0;k<rawSamples;++k) {
+            const float alpha=static_cast<float>(k)/(rawSamples-1u);
+            const uint16_t d=k*channels;
+            out[d]-=alpha*endVx;
+            out[d+1]-=alpha*endVy;
+            out[d+2]-=alpha*endVz;
+        }
+        out[0]=out[1]=out[2]=0;
+        out[end]=out[end+1]=out[end+2]=0;
+    }
+    return true;
 }
 
 static bool buildDerivedRawRepresentation(const float *raw6, uint16_t rawSamples,
@@ -983,7 +1095,8 @@ static bool buildInferenceRepresentation(uint16_t rawSamples) {
     // 5-Hz LPF on raw IMU samples, reset to the first sample per BOOT gesture.
     const bool derived = (rep == NoodleAIModel::REP_QUATERNION ||
                           rep == NoodleAIModel::REP_VELOCITY ||
-                          rep == NoodleAIModel::REP_VELOCITY_QUATERNION);
+                          rep == NoodleAIModel::REP_VELOCITY_QUATERNION ||
+                          rep == NoodleAIModel::REP_ACCEL_ROLL_PITCH);
     const bool accel = (rep != NoodleAIModel::REP_GYRO);
     const bool gyro = (rep == NoodleAIModel::REP_GYRO ||
                        rep == NoodleAIModel::REP_ACCEL_GYRO || derived);
@@ -1009,15 +1122,18 @@ static bool buildInferenceRepresentation(uint16_t rawSamples) {
                       (unsigned)normalized,(unsigned)channels,(unsigned)model.inputDim());
         return true;
     }
-    if (!derivedRaw || !buildDerivedRawRepresentation(gestureRaw,rawSamples,derivedRaw)) return false;
+    if (!derivedRaw) return false;
+    if (model.continuousOrientation()) {
+        if (!gestureQuat || !buildContinuousRawRepresentation(gestureRaw,gestureQuat,rawSamples,derivedRaw)) return false;
+    } else if (!buildDerivedRawRepresentation(gestureRaw,rawSamples,derivedRaw)) return false;
     resampleGeneric(derivedRaw, rawSamples, channels, inferenceWindow, normalized);
     if (rep == NoodleAIModel::REP_QUATERNION) {
         normalizeQuaternionChannels(inferenceWindow, normalized, channels, 0);
     } else if (rep == NoodleAIModel::REP_VELOCITY_QUATERNION) {
         normalizeQuaternionChannels(inferenceWindow, normalized, channels, 3);
     }
-    Serial.printf("REP derived=%s Madgwick(beta=%.3f) -> normalized=%u channels=%u input=%u\n",
-                  model.representationName(), MADGWICK_BETA, (unsigned)normalized,
+    Serial.printf("REP derived=%s Madgwick(beta=%.3f, continuous=%u) -> normalized=%u channels=%u input=%u\n",
+                  model.representationName(), MADGWICK_BETA, model.continuousOrientation()?1u:0u, (unsigned)normalized,
                   (unsigned)channels, (unsigned)model.inputDim());
     return true;
 }
@@ -1165,6 +1281,7 @@ static void processImuSample(float ax, float ay, float az,
                              float gx, float gy, float gz, uint32_t now) {
     // Stream continuously in both TRAINING and INFERENCE modes.
     // This is intentionally kept separate from gesture capture/model selection.
+    updateContinuousOrientation(ax,ay,az,gx,gy,gz);
     streamImuSample(ax, ay, az, gx, gy, gz, now);
 
     if (!gestureActive || deploy.active) return;
@@ -1192,6 +1309,11 @@ static void processImuSample(float ax, float ay, float az,
     gestureRaw[base + 3] = gx;
     gestureRaw[base + 4] = gy;
     gestureRaw[base + 5] = gz;
+    if (gestureQuat && model.continuousOrientation()) {
+        const uint16_t q=gestureSampleCount*4u;
+        gestureQuat[q]=s_orientation.w;gestureQuat[q+1]=s_orientation.x;
+        gestureQuat[q+2]=s_orientation.y;gestureQuat[q+3]=s_orientation.z;
+    }
     ++gestureSampleCount;
 }
 
@@ -1236,7 +1358,7 @@ void setup() {
                   (unsigned)MIN_GESTURE_SAMPLES,
                   (unsigned)MAX_GESTURE_SAMPLES);
     Serial.println("NAI4 LPF5 reps: accel | gyro | accel+gyro | accel-dir+mag | velocity");
-    Serial.println("Derived reps: 6-axis Madgwick -> relative quaternion / gravity-compensated velocity -> temporal resampling -> StandardScaler");
+    Serial.println("Derived reps: continuous 6-axis Madgwick (initialized once) + per-gesture velocity reset; LPF5 and StandardScaler");
     Serial.printf("Training BLE: up to %u samples/notification (count-aware final packet)\n",
                   (unsigned)TRAIN_BLE_BATCH_SIZE);
 

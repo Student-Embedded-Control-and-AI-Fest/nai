@@ -34,6 +34,7 @@ public:
         REP_VELOCITY = 5,
         REP_VELOCITY_QUATERNION = 6,
         REP_ACCEL_DIR_MAG = 9, // unit LPF5 XYZ direction and LPF5 magnitude
+        REP_ACCEL_ROLL_PITCH = 10, // LPF5 XYZ + continuous Madgwick gravity-referenced roll, pitch
 
         // NAI3 source-compatibility aliases.
         SENSOR_ACCEL = REP_ACCEL,
@@ -69,6 +70,7 @@ public:
 
     InputRepresentation representation() const { return _representation; }
     uint16_t channelCount() const;
+    bool continuousOrientation() const { return _continuousOrientation; }
     const char *representationName() const;
 
     // Compatibility with NAI3-era application code.
@@ -123,6 +125,7 @@ private:
 #endif
     bool _loaded = false;
     bool _binaryClassifier = false;
+    bool _continuousOrientation = false;
     bool _tensorsInitialized = false;
     char _slot = 0;
 

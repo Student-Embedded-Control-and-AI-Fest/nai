@@ -9,6 +9,7 @@ namespace {
 constexpr uint16_t MODEL_VERSION = 4;
 constexpr uint16_t FLAG_BINARY_CLASSIFIER = 0x0001;
 constexpr uint16_t FLAG_LPF5 = 0x0008;
+constexpr uint16_t FLAG_CONT_ORIENTATION = 0x0010;
 constexpr uint16_t FLAG_INT8 = 0x0002;
 constexpr const char *ACTIVE_FILE = "nai_active";
 constexpr const char *CFG_FILE = "cfg.bin";
@@ -59,6 +60,7 @@ void NoodleAIModel::clearRuntime() {
 
     _loaded = false;
     _binaryClassifier = false;
+    _continuousOrientation = false;
     _slot = 0;
     _representation = REP_ACCEL;
     _windowLength = 0;
@@ -120,7 +122,7 @@ bool NoodleAIModel::readConfig(char slot) {
     switch(h.reserved) {
     case REP_ACCEL: case REP_GYRO: case REP_ACCEL_GYRO:
     case REP_QUATERNION: case REP_VELOCITY: case REP_VELOCITY_QUATERNION:
-    case REP_ACCEL_DIR_MAG:
+    case REP_ACCEL_DIR_MAG: case REP_ACCEL_ROLL_PITCH:
         parsedRepresentation=static_cast<InputRepresentation>(h.reserved);break;
     default:
         f.close();return false;
@@ -142,10 +144,13 @@ bool NoodleAIModel::readConfig(char slot) {
 #endif
     // Reject missing LPF5 marker, former HPF packages and unknown flags.
     if (!(h.flags & FLAG_LPF5) ||
-        (h.flags & ~(FLAG_BINARY_CLASSIFIER | FLAG_INT8 | FLAG_LPF5))) {
+        (h.flags & ~(FLAG_BINARY_CLASSIFIER | FLAG_INT8 | FLAG_LPF5 | FLAG_CONT_ORIENTATION))) {
         f.close();return false;
     }
     _binaryClassifier = (h.flags & FLAG_BINARY_CLASSIFIER) != 0;
+    _continuousOrientation = (h.flags & FLAG_CONT_ORIENTATION) != 0;
+    if (parsedRepresentation == REP_ACCEL_ROLL_PITCH && !_continuousOrientation) { f.close(); return false; }
+    if (_continuousOrientation && h.sampleRateHz != 50u) { f.close(); return false; }
     _representation = parsedRepresentation;
     _windowLength = h.windowLength;
     _sampleRateHz = h.sampleRateHz;
@@ -573,6 +578,7 @@ uint16_t NoodleAIModel::representationChannelCount(InputRepresentation rep) {
     case REP_VELOCITY: return 3;
     case REP_VELOCITY_QUATERNION: return 7;
     case REP_ACCEL_DIR_MAG: return 4;
+    case REP_ACCEL_ROLL_PITCH: return 5;
     default: return 0;
     }
 }
@@ -590,6 +596,7 @@ const char *NoodleAIModel::representationName() const {
     case REP_VELOCITY: return "velocity";
     case REP_VELOCITY_QUATERNION: return "velocity+quaternion";
     case REP_ACCEL_DIR_MAG: return "accel-dir+mag";
+    case REP_ACCEL_ROLL_PITCH: return "accel+roll+pitch";
     default: return "unknown";
     }
 }

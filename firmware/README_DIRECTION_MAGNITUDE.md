@@ -7,8 +7,11 @@ Every BOOT-triggered gesture is processed at the **raw 50 Hz** sample rate using
 - **Accel (ID 1):** LPF → temporal resampling → per-gesture axis mean subtraction → training-derived StandardScaler.
 - **Gyro (ID 2):** LPF → temporal resampling → per-gesture axis mean subtraction → StandardScaler. Startup zero-rate calibration is independent.
 - **Accel + Gyro (ID 3):** LPF on six axes → resampling → per-gesture mean subtraction on six axes → StandardScaler.
-- **Estimated Velocity (ID 5):** LPF accel + gyro → Madgwick orientation → world-frame gravity compensation → trapezoidal integration + endpoint correction → resampling → StandardScaler.
+- **Estimated Velocity (ID 5):** gesture-local LPF acceleration + continuous Madgwick quaternion → world-frame gravity compensation → trapezoidal integration + endpoint correction → resampling → StandardScaler.
 - **Accel direction + magnitude (ID 9):** LPF accel → resampling → unit XYZ direction + magnitude of the **same filtered vector**. No gesture centering. The direction scaler is identity; only magnitude is standardized. At `m <= 0.001 g`, direction is `[0,0,0]` rather than a noisy unit vector.
 
 **No HPF code or selectable filter mode remains.** The firmware requires the `NAI4` `cfg.bin` bit `0x0008` for LPF5 and rejects incompatible old packages (including IDs 7/8). Retrain/re-export the model with this version of the web trainer before deployment.
 
+
+
+Note: Madgwick initializes once after startup, not on every BOOT press. See README_CONTINUOUS_MADGWICK.md.
