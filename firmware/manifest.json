@@ -1,6 +1,6 @@
 {
   "name": "NoodleAI Mode 1 ESP32-S3 Matrix INT8",
-  "version": "int8-d54be1a804",
+  "version": "int8-edcb8baceb",
   "new_install_prompt_erase": true,
   "new_install_improv_wait_time": 0,
   "builds": [

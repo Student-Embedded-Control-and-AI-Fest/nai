@@ -7,7 +7,74 @@
     ['viewerAx', 0], ['viewerAy', 1], ['viewerAz', 2],
     ['viewerGx', 3], ['viewerGy', 4], ['viewerGz', 5],
   ];
+  const ORIENTATION_CHANNELS = [
+    ['viewerQw',0,[-1,1]], ['viewerQx',1,[-1,1]],
+    ['viewerQy',2,[-1,1]], ['viewerQz',3,[-1,1]],
+    ['viewerRoll',4,[-180,180]], ['viewerPitch',5,[-90,90]],
+  ];
   let dataset = null;
+
+  // Visual-only spherical interpolation of raw q=[w,x,y,z] samples.
+  // Quaternion signs are matched locally because q and -q encode the same pose.
+  function unitQuat(data, base) {
+    const q=[Number(data[base]),Number(data[base+1]),Number(data[base+2]),Number(data[base+3])];
+    const norm=Math.hypot(...q);
+    return Number.isFinite(norm)&&norm>1e-10 ? q.map(v=>v/norm) : null;
+  }
+  function slerp(qa,qb,f) {
+    let dot=qa.reduce((s,v,i)=>s+v*qb[i],0);
+    if(dot<0){qb=qb.map(v=>-v);dot=-dot;}
+    dot=Math.max(-1,Math.min(1,dot));
+    if(dot>0.9995){
+      const q=qa.map((v,i)=>v+(qb[i]-v)*f), norm=Math.hypot(...q);
+      return q.map(v=>v/norm);
+    }
+    const ang=Math.acos(dot), sinAng=Math.sin(ang);
+    const a=Math.sin((1-f)*ang)/sinAng, b=Math.sin(f*ang)/sinAng;
+    return qa.map((v,i)=>a*v+b*qb[i]);
+  }
+  function readOrientation(arrays,n,length) {
+    if(!arrays.quat_data) return null;
+    const quat=arrays.quat_data, offsets=arrays.raw_offsets;
+    if(!offsets || !Array.isArray(offsets.shape) || offsets.shape.length!==1 || offsets.data.length!==n+1)
+      throw new Error('quat_data requires raw_offsets with one start index per gesture plus the final endpoint.');
+    if(!arrays.raw_data || arrays.raw_data.shape?.length!==2 || arrays.raw_data.shape[1]!==6)
+      throw new Error('quat_data requires matching raw_data [total_raw_samples,6].');
+    const total=arrays.raw_data.shape[0];
+    if(quat.shape?.length!==2 || quat.shape[0]!==total || quat.shape[1]!==4 || quat.data.length!==total*4)
+      throw new Error('quat_data must have shape [total_raw_samples,4] with quaternion order [qw,qx,qy,qz].');
+    const rows=new Array(n);
+    let prevEnd=0;
+    for(let i=0;i<n;i++) {
+      const start=Number(offsets.data[i]), end=Number(offsets.data[i+1]), srcN=end-start;
+      if(!Number.isInteger(start)||!Number.isInteger(end)||start!==prevEnd||srcN<2||end>total)
+        throw new Error(`Invalid raw_offsets for gesture ${i+1}.`);
+      prevEnd=end;
+      const src=new Array(srcN);
+      for(let j=0;j<srcN;j++) {
+        let q=unitQuat(quat.data,(start+j)*4);
+        if(!q) throw new Error(`Invalid quaternion in gesture ${i+1} at sample ${j+1}.`);
+        if(j>0 && src[j-1].reduce((sum,v,k)=>sum+v*q[k],0)<0)q=q.map(v=>-v);
+        src[j]=q;
+      }
+      // Canonicalize the initial sign for easier class comparison.
+      if(src[0][0]<0) for(let j=0;j<srcN;j++)src[j]=src[j].map(v=>-v);
+      const row=new Float32Array(length*6);
+      for(let t=0;t<length;t++) {
+        const pos=t*(srcN-1)/(length-1), i0=Math.floor(pos), i1=Math.min(i0+1,srcN-1);
+        const q=slerp(src[i0],src[i1],pos-i0);
+        const [w,x,y,z]=q;
+        for(let c=0;c<4;c++)row[t*6+c]=q[c];
+        const roll=Math.atan2(2*(w*x+y*z),1-2*(x*x+y*y));
+        const pitch=Math.asin(Math.max(-1,Math.min(1,2*(w*y-z*x))));
+        row[t*6+4]=roll*180/Math.PI;
+        row[t*6+5]=pitch*180/Math.PI;
+      }
+      rows[i]=row;
+    }
+    if(prevEnd!==total)throw new Error('Last raw_offset does not match raw_data length.');
+    return rows;
+  }
 
   function firstNumber(arrays, keys, fallback = null) {
     for (const k of keys) {
@@ -110,7 +177,12 @@
     });
     const classRows = orderedLabels.map(() => []);
     for (let i=0; i<n; i++) classRows[mapped[i]].push(i);
-    return { labels: orderedLabels, classRows, rows, length, axis,
+    let orientationRows=null, orientationWarning=null;
+    if(arrays.quat_data) {
+      try { orientationRows=readOrientation(arrays,n,length); }
+      catch(error) { orientationWarning=error.message; } // Preserve six-channel inspection.
+    }
+    return { labels: orderedLabels, classRows, rows, orientationRows, orientationWarning, length, axis,
       rateHz: firstNumber(arrays, ['sample_rate_hz'], null), count: n };
   }
 
@@ -121,7 +193,7 @@
   }
   function setText(id, content) { $(id).textContent = content; }
 
-  function redrawPanel(canvas, d, c, seriesIndices, mean, axis, onlyOne) {
+  function redrawPanel(canvas, d, c, seriesIndices, mean, axis, onlyOne, seriesRows=d.rows, stroke='#3086d1', noMean=false) {
     const ctx = canvas.getContext('2d');
     const W = canvas.width, H = canvas.height;
     const pad = {l:59, r:13, t:14, b:33};
@@ -168,9 +240,9 @@
       ctx.stroke();
     };
     for (const row of seriesIndices) {
-      draw(d.rows[row], c<3?'#77a8eb':'#a79ada', onlyOne?2:1, onlyOne?0.95:0.25);
+      draw(seriesRows[row], noMean?stroke:(c<3?'#77a8eb':'#a79ada'), onlyOne?2:1, onlyOne?0.95:(noMean?0.45:0.25));
     }
-    if(!onlyOne) draw(mean,c<3?'#1759c0':'#6d4fb8',2.7,1,true);
+    if(!onlyOne && !noMean) draw(mean,c<3?'#1759c0':'#6d4fb8',2.7,1,true);
     ctx.restore();
   }
 
@@ -199,11 +271,19 @@
       const canvas=$(id);
       redrawPanel(canvas,dataset,c,plotIndices,mean[c],dataset.axis[c<3?0:1],one);
     }
+    if(dataset.orientationRows){
+      for(const [id,c,limits] of ORIENTATION_CHANNELS)
+        redrawPanel($(id),dataset,c,plotIndices,null,limits,one,dataset.orientationRows,c<4?'#128477':'#9057b0',true);
+    }
     setText('viewerSelectedCount', String(ids.length));
     const chosenName = dataset.labels[cls] || `Class ${cls}`;
+    const oriInfo=dataset.orientationRows
+      ? ' Optional orientation plots available below.'
+      : dataset.orientationWarning
+        ? ` Orientation was skipped: ${dataset.orientationWarning}` : '';
     status(one
-      ? `${chosenName}: viewing gesture ${ids.indexOf(Number(sampleChoice))+1} of ${ids.length}. Y scales remain locked across classes.`
-      : `${chosenName}: ${ids.length} gestures. Bold line is the mean of every gesture; ${plotIndices.length} individual traces shown. Y scales are locked across classes.`);
+      ? `${chosenName}: viewing gesture ${ids.indexOf(Number(sampleChoice))+1} of ${ids.length}. Y scales remain locked across classes.${oriInfo}`
+      : `${chosenName}: ${ids.length} gestures. Bold line is the mean of every IMU channel; ${plotIndices.length} individual traces shown. Y scales are locked across classes.${oriInfo}`);
   }
 
   function populate() {
@@ -217,6 +297,11 @@
     sel.selectedIndex=firstNonempty>=0?firstNonempty:0;
     sel.disabled=false;
     $('viewerStats').hidden=false;
+    $('viewerOrientationSection').hidden=!dataset.orientationRows;
+    $('viewerOrientationSection').open=false; // Stay collapsed when a new dataset loads.
+    setText('viewerOrientationStatus',dataset.orientationRows
+      ? 'Continuous device quaternion found · 4 components + derived roll/pitch'
+      : '');
     setText('viewerTotal',String(dataset.count));
     setText('viewerClasses',String(dataset.labels.length));
     setText('viewerSteps',String(dataset.length));
@@ -267,5 +352,5 @@
 
   // Visibility changes do not recalculate domains, and chart sizes use fixed
   // intrinsic coordinates so locked limits are never lost on window resize.
-  window.NAIDataViewer = Object.freeze({ parseViewerArrays, openDataset });
+  window.NAIDataViewer = Object.freeze({ parseViewerArrays, readOrientation, openDataset });
 })();

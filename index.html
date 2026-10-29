@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#09111f">
   <meta name="description" content="NoodleAI Studio Mode 1 for ESP32-S3-Matrix: capture BOOT-delimited QMI8658 gestures, train locally, deploy NAI4 models, and run Noodle inference on-device.">
   <title>NoodleAI Studio · Mode 1</title>
-  <link rel="stylesheet" href="style.css?v=viewer-locked-v1">
+  <link rel="stylesheet" href="style.css?v=viewer-orientation-v2">
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
@@ -305,13 +305,13 @@
       </section>
 
       <!-- Read-only offline viewer for old and new six-channel NoodleAI NPZ datasets. -->
-      <section id="tab-viewer" class="tab-page" aria-label="NPZ six-channel data viewer">
+      <section id="tab-viewer" class="tab-page" aria-label="NPZ IMU and optional quaternion data viewer">
         <div class="panel viewer-panel">
           <div class="section-head viewer-heading">
             <div>
               <div class="section-kicker">DATA EXPLORER · OFFLINE</div>
               <h2>Data Viewer</h2>
-              <p>Open a NoodleAI <code>.npz</code> dataset, select a class, and compare all six IMU channels using locked Y-axis scales.</p>
+              <p>Open a NoodleAI <code>.npz</code> dataset, select a class, and compare six IMU channels and (when available) saved Madgwick orientation using locked Y-axis scales.</p>
             </div>
             <button id="viewerLoadBtn" class="primary" type="button">Load .npz dataset</button>
             <input id="viewerFileInput" type="file" accept=".npz,application/octet-stream" hidden>
@@ -345,6 +345,19 @@
             <div class="chart-card"><div class="chart-title"><div><strong>Gyroscope Y</strong><small>gy · normalized gesture timeline</small></div><span>deg/s</span></div><canvas id="viewerGy" width="740" height="218"></canvas></div>
             <div class="chart-card"><div class="chart-title"><div><strong>Gyroscope Z</strong><small>gz · normalized gesture timeline</small></div><span>deg/s</span></div><canvas id="viewerGz" width="740" height="218"></canvas></div>
           </div>
+          <details id="viewerOrientationSection" class="viewer-orientation" hidden>
+            <summary><span class="viewer-orientation-icon">◈</span><span>Orientation diagnostics <small id="viewerOrientationStatus">4 quaternion components + roll / pitch</small></span><span class="viewer-orientation-disclosure">Expand / collapse</span></summary>
+            <p class="viewer-orientation-intro">Quaternion traces come from <code>quat_data</code> recorded by the continuously running Madgwick estimator. They are unit-normalized, sign-aligned and spherically resampled to the normalized gesture timeline. Roll and pitch are derived from these quaternions. All Y-axis ranges are fixed; no quaternion class mean is shown because <code>q</code> and <code>−q</code> describe the same orientation.</p>
+            <div class="viewer-graphs" aria-label="Four quaternion component plots and roll and pitch plots">
+              <div class="chart-card"><div class="chart-title"><div><strong>Quaternion W</strong><small>qw · continuous Madgwick</small></div><span>−1 to +1</span></div><canvas id="viewerQw" width="740" height="218"></canvas></div>
+              <div class="chart-card"><div class="chart-title"><div><strong>Quaternion X</strong><small>qx · continuous Madgwick</small></div><span>−1 to +1</span></div><canvas id="viewerQx" width="740" height="218"></canvas></div>
+              <div class="chart-card"><div class="chart-title"><div><strong>Quaternion Y</strong><small>qy · continuous Madgwick</small></div><span>−1 to +1</span></div><canvas id="viewerQy" width="740" height="218"></canvas></div>
+              <div class="chart-card"><div class="chart-title"><div><strong>Quaternion Z</strong><small>qz · continuous Madgwick</small></div><span>−1 to +1</span></div><canvas id="viewerQz" width="740" height="218"></canvas></div>
+              <div class="chart-card"><div class="chart-title"><div><strong>Roll</strong><small>Gravity-referenced · derived from quaternion</small></div><span>degrees</span></div><canvas id="viewerRoll" width="740" height="218"></canvas></div>
+              <div class="chart-card"><div class="chart-title"><div><strong>Pitch</strong><small>Gravity-referenced · derived from quaternion</small></div><span>degrees</span></div><canvas id="viewerPitch" width="740" height="218"></canvas></div>
+            </div>
+            <p class="viewer-footnote">Quaternion plots use fixed <strong>−1…+1</strong> axes; roll uses <strong>−180°…+180°</strong> and pitch <strong>−90°…+90°</strong>. Roll can wrap at ±180°, and quaternion signs are not unique. These recordings contain only BOOT-held intervals—not the unseen motion between gestures. Old NPZ files without <code>quat_data</code> simply omit this section.</p>
+          </details>
           <p class="viewer-footnote">The viewer displays stored six-channel samples (<code>ax, ay, az, gx, gy, gz</code>) without applying the model scaler or additional filters. Y-axis limits are calculated once from <em>all classes in the file</em>; acceleration axes share one range, and gyroscope axes share another. The time axis shows normalized sample position, not necessarily the original gesture duration. This tab does not replace or modify your Capture &amp; Train dataset.</p>
         </div>
       </section>
@@ -449,7 +462,7 @@
   <script src="js/ble.js?v=mode1-studio"></script>
   <script src="js/metrics.js?v=mode1-dual-precision-v2"></script>
   <script src="js/app.js?v=mode1-gyro-hpf05-v1"></script>
-  <script src="js/data-viewer.js?v=viewer-locked-v1"></script>
+  <script src="js/data-viewer.js?v=viewer-orientation-v2"></script>
   <script src="js/firmware-installer.js?v=1"></script>
   <script>
     document.getElementById('aboutOpenFlashBtn')?.addEventListener('click', function () {
