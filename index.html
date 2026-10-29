@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#09111f">
   <meta name="description" content="NoodleAI Studio Mode 1 for ESP32-S3-Matrix: capture BOOT-delimited QMI8658 gestures, train locally, deploy NAI4 models, and run Noodle inference on-device.">
   <title>NoodleAI Studio · Mode 1</title>
-  <link rel="stylesheet" href="style.css?v=mode1-about-guide-video-v1">
+  <link rel="stylesheet" href="style.css?v=viewer-locked-v1">
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <script type="module" src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
@@ -67,7 +67,8 @@
       <button class="tab" data-tab="curves"><span>03</span>Results &amp; Curves</button>
       <button class="tab" data-tab="deploy"><span>04</span>Deploy &amp; Infer</button>
       <button class="tab" data-tab="firmware"><span>05</span>Flash Firmware</button>
-      <button class="tab" data-tab="about"><span>06</span>About the Board</button>
+      <button class="tab" data-tab="viewer"><span>06</span>Data Viewer</button>
+      <button class="tab" data-tab="about"><span>07</span>About the Board</button>
     </nav>
 
     <main>
@@ -302,6 +303,52 @@
           </div>
         </div>
       </section>
+
+      <!-- Read-only offline viewer for old and new six-channel NoodleAI NPZ datasets. -->
+      <section id="tab-viewer" class="tab-page" aria-label="NPZ six-channel data viewer">
+        <div class="panel viewer-panel">
+          <div class="section-head viewer-heading">
+            <div>
+              <div class="section-kicker">DATA EXPLORER · OFFLINE</div>
+              <h2>Data Viewer</h2>
+              <p>Open a NoodleAI <code>.npz</code> dataset, select a class, and compare all six IMU channels using locked Y-axis scales.</p>
+            </div>
+            <button id="viewerLoadBtn" class="primary" type="button">Load .npz dataset</button>
+            <input id="viewerFileInput" type="file" accept=".npz,application/octet-stream" hidden>
+          </div>
+          <div class="viewer-toolbar">
+            <label>Gesture class
+              <select id="viewerClass" disabled><option value="">Load a dataset first</option></select>
+            </label>
+            <label>Gesture traces
+              <select id="viewerSample" disabled><option value="all">Class mean + examples</option></select>
+            </label>
+            <div class="viewer-lock" title="Fixed axis ranges are calculated from the entire loaded dataset and do not change when switching classes.">
+              <span class="viewer-lock-symbol">&#128274;</span>
+              <div><strong>Y-axis locked</strong><small>Same acceleration and angular-rate scales for every class</small></div>
+            </div>
+          </div>
+          <div id="viewerStatus" class="viewer-status" role="status" aria-live="polite">No dataset loaded. Your file is opened locally in the browser; it is not uploaded.</div>
+          <div id="viewerStats" class="viewer-stats" hidden>
+            <div><span>DATASET</span><strong id="viewerFileName">—</strong></div>
+            <div><span>GESTURES</span><strong id="viewerTotal">—</strong></div>
+            <div><span>CLASSES</span><strong id="viewerClasses">—</strong></div>
+            <div><span>TIME STEPS</span><strong id="viewerSteps">—</strong></div>
+            <div><span>SELECTED CLASS</span><strong id="viewerSelectedCount">—</strong></div>
+          </div>
+          <div class="viewer-legend"><span class="viewer-key viewer-key-mean"></span><span>Class mean</span><span class="viewer-key viewer-key-trace"></span><span>Individual gesture traces (up to 32)</span></div>
+          <div class="viewer-graphs" aria-label="Six independent accelerometer and gyroscope graphs">
+            <div class="chart-card"><div class="chart-title"><div><strong>Acceleration X</strong><small>ax · normalized gesture timeline</small></div><span>g</span></div><canvas id="viewerAx" width="740" height="218"></canvas></div>
+            <div class="chart-card"><div class="chart-title"><div><strong>Acceleration Y</strong><small>ay · normalized gesture timeline</small></div><span>g</span></div><canvas id="viewerAy" width="740" height="218"></canvas></div>
+            <div class="chart-card"><div class="chart-title"><div><strong>Acceleration Z</strong><small>az · normalized gesture timeline</small></div><span>g</span></div><canvas id="viewerAz" width="740" height="218"></canvas></div>
+            <div class="chart-card"><div class="chart-title"><div><strong>Gyroscope X</strong><small>gx · normalized gesture timeline</small></div><span>deg/s</span></div><canvas id="viewerGx" width="740" height="218"></canvas></div>
+            <div class="chart-card"><div class="chart-title"><div><strong>Gyroscope Y</strong><small>gy · normalized gesture timeline</small></div><span>deg/s</span></div><canvas id="viewerGy" width="740" height="218"></canvas></div>
+            <div class="chart-card"><div class="chart-title"><div><strong>Gyroscope Z</strong><small>gz · normalized gesture timeline</small></div><span>deg/s</span></div><canvas id="viewerGz" width="740" height="218"></canvas></div>
+          </div>
+          <p class="viewer-footnote">The viewer displays stored six-channel samples (<code>ax, ay, az, gx, gy, gz</code>) without applying the model scaler or additional filters. Y-axis limits are calculated once from <em>all classes in the file</em>; acceleration axes share one range, and gyroscope axes share another. The time axis shows normalized sample position, not necessarily the original gesture duration. This tab does not replace or modify your Capture &amp; Train dataset.</p>
+        </div>
+      </section>
+
       <section id="tab-about" class="tab-page" aria-label="About the ESP32-S3 Matrix and NoodleAI preprocessing">
         <div class="panel about-hero">
           <div class="about-intro">
@@ -402,6 +449,7 @@
   <script src="js/ble.js?v=mode1-studio"></script>
   <script src="js/metrics.js?v=mode1-dual-precision-v2"></script>
   <script src="js/app.js?v=mode1-gyro-hpf05-v1"></script>
+  <script src="js/data-viewer.js?v=viewer-locked-v1"></script>
   <script src="js/firmware-installer.js?v=1"></script>
   <script>
     document.getElementById('aboutOpenFlashBtn')?.addEventListener('click', function () {
