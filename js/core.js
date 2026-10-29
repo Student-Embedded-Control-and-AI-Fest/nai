@@ -8,6 +8,7 @@ const FLAG_BINARY_CLASSIFIER = 0x0001;
 const FLAG_INT8 = 0x0002;
 const FLAG_LPF5 = 0x0008; // Required for all new NAI4 models: 5 Hz LPF before resampling.
 const FLAG_CONT_ORIENTATION = 0x0010; // Quaternion estimated continuously on device, never reset by BOOT.
+const FLAG_GYRO_HPF05 = 0x0020; // Direct gyro classifier only: 0.5-Hz HPF -> 5-Hz LPF.
 const QCFG_MAGIC = 'Q8M1';
 
 const REP = {
@@ -18,7 +19,7 @@ const REP = {
   'velocity': { code: 5, channels: 3 },
   'velocity+quaternion': { code: 6, channels: 7 },
   'accel-dir+mag': { code: 9, channels: 4 },
-  'accel+roll+pitch': { code: 10, channels: 5 }, // unit direction + LPF acceleration magnitude
+  'accel+roll+pitch': { code: 10, channels: 5 }, // LPF acceleration + continuous roll and pitch
 };
 const CODE_TO_REP = Object.fromEntries(Object.entries(REP).map(([k,v]) => [v.code, k]));
 // Acceleration in g. Directions below this magnitude are set to zero, not amplified.
@@ -427,6 +428,27 @@ function filterRaw6Lpf5(raw, T, sampleRate, axes=[0,1,2,3,4,5]) {
   return out;
 }
 
+// First-order 0.5-Hz HPF, gyro axes only. Reset on each BOOT gesture.
+// Input data is already startup-bias corrected by the device; never apply
+// this stage to accelerometer channels or the continuous Madgwick estimator.
+function filterRaw6GyroHpf05(raw, T, sampleRate) {
+  if (!Number.isFinite(sampleRate) || sampleRate <= 0) throw new Error('Invalid sensor sample rate');
+  const out=Float32Array.from(raw);
+  const dt=1/sampleRate, tau=1/(2*Math.PI*0.5);
+  const alpha=Math.fround(tau/(tau+dt));
+  for (let c=3;c<6;c++) {
+    let prevX=out[c], hp=Math.fround(0);
+    out[c]=0;
+    for (let t=1;t<T;t++) {
+      const offset=t*6+c, x=out[offset];
+      hp=Math.fround(alpha*Math.fround(hp+Math.fround(x-prevX)));
+      out[offset]=hp;
+      prevX=x;
+    }
+  }
+  return out;
+}
+
 function buildRepresentationOne(ds, sampleIndex, rep) {
   const N=ds.N;
   if (!REP[rep]) throw new Error(`Unknown representation ${rep}`);
@@ -435,7 +457,10 @@ function buildRepresentationOne(ds, sampleIndex, rep) {
   const rawObj=ds.rawRows[sampleIndex];
   const T=rawObj.length;
   const idx=rep==='gyro'?[3,4,5]:rep==='accel+gyro'?[0,1,2,3,4,5]:[0,1,2];
-  const filtered=filterRaw6Lpf5(rawObj.data,T,ds.sampleRate,rep==='quaternion'||rep==='velocity'||rep==='velocity+quaternion'||rep==='accel+roll+pitch'?[0,1,2,3,4,5]:idx);
+  // HPF only for direct gyro input kinds, NEVER for Madgwick-derived kinds.
+  const hpfInput=(rep==='gyro'||rep==='accel+gyro')
+    ? filterRaw6GyroHpf05(rawObj.data,T,ds.sampleRate) : rawObj.data;
+  const filtered=filterRaw6Lpf5(hpfInput,T,ds.sampleRate,rep==='quaternion'||rep==='velocity'||rep==='velocity+quaternion'||rep==='accel+roll+pitch'?[0,1,2,3,4,5]:idx);
   if (rep==='accel'||rep==='gyro'||rep==='accel+gyro'||rep==='accel-dir+mag') {
     const selected=new Float32Array(T*idx.length);
     for(let r=0;r<T;r++)for(let c=0;c<idx.length;c++)selected[r*idx.length+c]=filtered[r*6+idx[c]];
@@ -621,7 +646,8 @@ function makeCfg(labels,N,inputDim,dims,rep,binary,quant=null) {
   out.set([0x4e,0x41,0x49,0x34],0); // NAI4
   let o=4;
   const flags=(binary?FLAG_BINARY_CLASSIFIER:0)|(quant?FLAG_INT8:0)|FLAG_LPF5|
-    (['quaternion','velocity','velocity+quaternion','accel+roll+pitch'].includes(rep)?FLAG_CONT_ORIENTATION:0);
+    (['quaternion','velocity','velocity+quaternion','accel+roll+pitch'].includes(rep)?FLAG_CONT_ORIENTATION:0)|
+    (['gyro','accel+gyro'].includes(rep)?FLAG_GYRO_HPF05:0);
   const vals=[4,flags,N,SAMPLE_RATE_HZ,dims.length-1,labels.length,inputDim,REP[rep].code];
   vals.forEach(v=>{dv.setUint16(o,v,true);o+=2;});
   dims.forEach(v=>{dv.setUint16(o,v,true);o+=2;});
@@ -935,10 +961,13 @@ function parseCfg(bytes) {
   const v=[];for(let i=0;i<8;i++){v.push(dv.getUint16(o,true));o+=2;}
   const [version,flags,N,rate,nLayers,nClasses,inputDim,reserved]=v;
   if(magic!=='NAI4'||version!==4)throw new Error('NAI4 v4 model required');
-  if((flags&FLAG_LPF5)===0 || (flags&~(FLAG_BINARY_CLASSIFIER|FLAG_INT8|FLAG_LPF5|FLAG_CONT_ORIENTATION)))
-    throw new Error('Incompatible preprocessing: a new 5 Hz LPF model is required. Retrain/export using this web version.');
+  if((flags&FLAG_LPF5)===0 || (flags&~(FLAG_BINARY_CLASSIFIER|FLAG_INT8|FLAG_LPF5|FLAG_CONT_ORIENTATION|FLAG_GYRO_HPF05)))
+    throw new Error('Unsupported preprocessing flags. Retrain/export using this web version.');
   const rep=CODE_TO_REP[reserved]||null;
   if(!rep)throw new Error(`Unsupported representation code ${reserved}; retrain with the new input selection.`);
+  const directGyro=(rep==='gyro'||rep==='accel+gyro');
+  if(!!(flags&FLAG_GYRO_HPF05)!==directGyro)
+    throw new Error('Gyroscope preprocessing mismatch: 0.5 Hz HPF is required only for direct gyro inputs. Retrain/re-export the model.');
   if(rep==='accel+roll+pitch' && !(flags&FLAG_CONT_ORIENTATION))throw new Error('Continuous orientation flag is required for accel+roll+pitch');
   const dims=[];for(let i=0;i<nLayers+1;i++){dims.push(dv.getUint16(o,true));o+=2;}
   const dec=new TextDecoder('utf-8'),labels=[];
@@ -1131,5 +1160,5 @@ window.NAI = Object.freeze({
   fitScaler, configureRepresentationScaler, standardizeRows, flattenRows,
   makeModel, predictTf, accuracy,
   exportNai4, exportNai4Int8, loadNai, predictNai, predictQuantized,
-  _internals:Object.freeze({makeNpyHeader,npyF32,npyI32,npyUnicode,parseNpy,MT19937,makeCfg,parseCfg,filterRaw6Lpf5}),
+  _internals:Object.freeze({makeNpyHeader,npyF32,npyI32,npyUnicode,parseNpy,MT19937,makeCfg,parseCfg,filterRaw6Lpf5,filterRaw6GyroHpf05}),
 });

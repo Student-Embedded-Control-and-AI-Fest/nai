@@ -24,19 +24,19 @@ The onboard IMU provides raw `ax,ay,az` (g) and `gx,gy,gz` (deg/s) at a nominal 
 ## Shared preprocessing
 
 - Apply a first-order **5 Hz LPF** to the required raw IMU channels **before** resampling. The LPF is restarted per gesture and initialized with its first input sample.
-- **No HPF** is used in this Mode 1 firmware.
+- Only direct gyroscope classification kinds (`gyro`, `accel+gyro`) apply a **0.5 Hz HPF on gyro XYZ** before the 5 Hz LPF; Madgwick does **not** use the HPF.
 - Arrange the resulting features in **time-major order**.
 - Direct sensor representations then subtract each channel's **own mean for the gesture**. This is not division by gesture-wise standard deviation.
 - Training-derived **StandardScaler** statistics (training set only) are stored in the model and used again during device inference. The three unit-direction channels of the direction + magnitude representation are intentionally left unscaled.
 - Startup gyro bias is subtracted from gyroscope measurements when stationary calibration succeeds.
 
-## All five input kinds
+## Selectable input kinds
 
 | Input kind | NAI4 ID | Channels | Processing | N=100 inputs |
 |---|---:|---:|---|---:|
 | **Accelerometer** | 1 | 3 | LPF5 → resample → per-axis gesture mean subtraction → StandardScaler | 300 |
 | **Accel direction + magnitude** | 9 | 4 | LPF5 → resample XYZ → unit direction + magnitude; **no centering**, standardize **magnitude only** | 400 |
-| **Gyroscope** | 2 | 3 | Gyro bias correction → LPF5 → resample → per-axis gesture mean subtraction → StandardScaler | 300 |
+| **Gyroscope** | 2 | 3 | Gyro bias correction → HPF0.5 → LPF5 → resample → per-axis gesture mean subtraction → StandardScaler | 300 |
 | **Accel + Gyro** | 3 | 6 | Gyro bias correction → LPF5 on six channels → resample → center each axis → StandardScaler | 600 |
 | **Estimated Velocity** | 5 | 3 | Startup gyro bias correction → continuous Madgwick + gesture-local LPF5 acceleration → world-frame gravity subtraction → per-gesture integration + endpoint correction → resample → StandardScaler | 300 |
 

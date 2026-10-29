@@ -340,7 +340,7 @@ async function trainModel(){
     const report={train,validation,int8Validation:quantMetrics,fp32Int8Agreement,int8ValidationPredictions,history:hist,split,
       validationPredictions:split.test.map((datasetIndex,i)=>({datasetIndex,actual:Number(yva[i]),predicted:Number(va.pred[i]),probabilities:Array.from(va.probs[i])})),
       metadata:{createdUtc:new Date().toISOString(),model_format:'NAI4 FP32 + NAI4 packed INT8',architecture:pkg.dims,
-        representation:rep,representation_label:REP_LABEL[rep],preprocessing:['quaternion','velocity','velocity+quaternion','accel+roll+pitch'].includes(rep)?'LPF5 + continuous device Madgwick; no BOOT quaternion reset':'LPF5-before-resampling',lowpassHz:5.0,centering:rep==='accel'||rep==='gyro'||rep==='accel+gyro'?'per-gesture mean':'none',normalizedLength:ds.N,sampleRateHz:ds.sampleRate,
+        representation:rep,representation_label:REP_LABEL[rep],preprocessing:['gyro','accel+gyro'].includes(rep)?'gyro HPF0.5 + LPF5-before-resampling':(['quaternion','velocity','velocity+quaternion','accel+roll+pitch'].includes(rep)?'LPF5 + continuous device Madgwick; no BOOT quaternion reset':'LPF5-before-resampling'),gyroHighpassHz:['gyro','accel+gyro'].includes(rep)?0.5:null,lowpassHz:5.0,centering:rep==='accel'||rep==='gyro'||rep==='accel+gyro'?'per-gesture mean':'none',normalizedLength:ds.N,sampleRateHz:ds.sampleRate,
         labels:[...ds.labels],targets:Array.from(ds.y),hiddenLayers:hidden,epochs,
         optimizer:'Adam',learningRate:0.001,batchSize:Math.min(200,split.train.length),seed:42,
         method:'20% stratified validation holdout (at least one example per class per split)',coverageAdjusted:split.coverageAdjusted,

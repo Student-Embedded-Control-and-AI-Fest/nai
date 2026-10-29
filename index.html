@@ -170,7 +170,7 @@
             <label>Hidden layers<input id="hiddenLayers" value="32,16" placeholder="32,16"></label>
             <label>Epochs<input id="epochs" type="number" min="10" max="5000" value="300"></label>
           </div>
-          <p class="methodology">Preprocessing: 5 Hz low-pass filter on the raw 50-Hz IMU samples, before temporal resampling. Accelerometer, gyroscope, and combined inputs use per-gesture mean centering. Direction + magnitude preserves total acceleration and unit direction.</p>
+          <p class="methodology">Preprocessing: 5 Hz low-pass filter before resampling; direct gyro and accel+gyro inputs additionally use a 0.5 Hz gyro-only high-pass filter before the LPF. Madgwick orientation never uses the HPF. Direct inputs use per-gesture mean centering; direction + magnitude preserves 1 g at rest.</p>
           <div id="topology" class="topology"><span>NETWORK</span>Topology: —</div>
           <div class="action-row train-action"><button id="trainBtn" class="primary" disabled>Train model + evaluate INT8</button><span id="trainResult" class="inline-status"></span></div>
           <p id="quantResult" class="methodology">Train a model to evaluate INT8 quantization.</p>
@@ -364,12 +364,12 @@
           </div>
           <div class="about-table-wrap">
             <table class="about-table">
-              <thead><tr><th scope="col">Input kind</th><th scope="col">Channels</th><th scope="col">After the 5 Hz LPF</th><th scope="col">MLP inputs<br>at N = 100</th></tr></thead>
+              <thead><tr><th scope="col">Input kind</th><th scope="col">Channels</th><th scope="col">Input preprocessing</th><th scope="col">MLP inputs<br>at N = 100</th></tr></thead>
               <tbody>
                 <tr><th scope="row">Accelerometer <span class="about-code">ax, ay, az</span></th><td>3</td><td>Resample, then subtract <strong>each axis's mean over that gesture</strong>. Apply the training-derived StandardScaler.</td><td>300</td></tr>
                 <tr><th scope="row">Accel direction + magnitude <span class="about-code">ux, uy, uz, |a|</span></th><td>4</td><td>Resample filtered XYZ, then split into <strong>unit direction</strong> and <strong>total magnitude</strong>. No per-gesture centering. Apply the training-derived StandardScaler only to magnitude; leave the three unit-direction components unchanged.</td><td>400</td></tr>
-                <tr><th scope="row">Gyroscope <span class="about-code">gx, gy, gz</span></th><td>3</td><td>Use gyro readings corrected for startup bias (when calibration succeeds). Resample, center each axis independently, then apply StandardScaler.</td><td>300</td></tr>
-                <tr><th scope="row">Accel + Gyro <span class="about-code">ax, ay, az, gx, gy, gz</span></th><td>6</td><td>Filter all six channels, resample, center <strong>each of the six axes separately</strong>, then apply StandardScaler.</td><td>600</td></tr>
+                <tr><th scope="row">Gyroscope <span class="about-code">gx, gy, gz</span></th><td>3</td><td>Startup gyro bias correction; 0.5 Hz HPF then 5 Hz LPF on gyro XYZ; resample, center per gesture, then apply StandardScaler.</td><td>300</td></tr>
+                <tr><th scope="row">Accel + Gyro <span class="about-code">ax, ay, az, gx, gy, gz</span></th><td>6</td><td>Gyro XYZ: 0.5 Hz HPF → 5 Hz LPF; accel XYZ: 5 Hz LPF only. Resample, center <strong>each of the six axes separately</strong>, then apply StandardScaler.</td><td>600</td></tr>
                 <tr><th scope="row">Estimated Velocity <span class="about-code">vx, vy, vz</span></th><td>3</td><td>Low-pass filter accelerometer per gesture; use <strong>continuous Madgwick orientation</strong>, remove world-frame gravity, integrate acceleration and apply endpoint correction, then resample and standardize.</td><td>300</td></tr>
                 <tr><th scope="row">Accel XYZ + Roll + Pitch <span class="about-code">ax, ay, az, φ, θ</span></th><td>5</td><td>Resample LPF5 acceleration with <strong>gravity-referenced roll and pitch</strong> derived from the quaternion continuously estimated by the device. No per-gesture orientation reset or mean centering.</td><td>500</td></tr>
               </tbody>
@@ -398,10 +398,10 @@
     </footer>
   </div>
 
-  <script src="js/core.js?v=mode1-lpf5-v1"></script>
+  <script src="js/core.js?v=mode1-gyro-hpf05-v1"></script>
   <script src="js/ble.js?v=mode1-studio"></script>
   <script src="js/metrics.js?v=mode1-dual-precision-v2"></script>
-  <script src="js/app.js?v=mode1-lpf5-class-delete-v1"></script>
+  <script src="js/app.js?v=mode1-gyro-hpf05-v1"></script>
   <script src="js/firmware-installer.js?v=1"></script>
   <script>
     document.getElementById('aboutOpenFlashBtn')?.addEventListener('click', function () {

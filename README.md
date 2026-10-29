@@ -88,7 +88,7 @@ The training dropdown supports:
 - Accel + Gyro
 - Estimated Velocity
 
-The web trains five input kinds. Quaternion and Velocity + Quaternion are not selectable for new models. Previous high-pass-filter model packages are intentionally incompatible with this LPF5-only firmware; export fresh models from raw gesture data.
+The web trains six input kinds. Quaternion and Velocity + Quaternion are not selectable for new models. Old direct gyro model packages (without the explicit HPF0.5 flag) are intentionally incompatible with the new firmware; export fresh models from raw gesture data.
 
 The defining Mode 1 behavior is unchanged: **BOOT supplies each gesture boundary, and the gesture is resampled to a fixed number of time positions before FCN inference.**
 
@@ -141,7 +141,7 @@ node tests/test_class_deletion.cjs
 ```
 
 
-**Current preprocessing:** The input-kind dropdown has six choices; see [README_INPUT_PREPROCESSING.md](README_INPUT_PREPROCESSING.md) for the LPF5 preprocessing, unit-direction + magnitude representation ID 9, and continuous Madgwick roll/pitch representation ID 10. The supplied web-installer factory binary is still legacy; see README_CONTINUOUS_MADGWICK.md for rebuilding.
+**Current preprocessing:** The input-kind dropdown has six choices; see [README_INPUT_PREPROCESSING.md](README_INPUT_PREPROCESSING.md) for LPF5 and gyro-only HPF0.5 preprocessing, unit-direction + magnitude representation ID 9, and continuous Madgwick roll/pitch representation ID 10. The supplied web-installer factory binary is still legacy; see README_CONTINUOUS_MADGWICK.md for rebuilding.
 
 ## Browser-based USB firmware installer
 

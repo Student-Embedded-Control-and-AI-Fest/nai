@@ -9,3 +9,7 @@ The firmware continuously updates Madgwick across BOOT presses and releases, usi
 **Installer warning:** the provided merged factory `.bin` in this web archive remains the *older* build. The browser installer still installs that older firmware, not the updated Madgwick implementation. Compile the accompanying firmware source and flash it before using the new input kind; replace the installer factory image only after a successful target build.
 
 Suggested hardware acceptance test: perform two BOOT gestures separated by a slow, unrecorded 30° tilt; verify the first roll/pitch sample in the second gesture reflects the new tilt rather than resetting to 0°. Compare the same recorded example's browser-prepared features against the firmware's pre-scaler window values within Float32 numerical tolerance.
+
+## Direct gyro classifier HPF0.5 update
+
+Only direct `gyro` and `accel+gyro` classification representations now use 0.5 Hz gyro-only HPF before their 5 Hz LPF. The continuous Madgwick orientation estimator has no HPF and does not reset on BOOT. Direct gyro model exports use flag `0x0020` and require the matching new firmware. This does not change the five-channel `accel+roll+pitch` representation.
