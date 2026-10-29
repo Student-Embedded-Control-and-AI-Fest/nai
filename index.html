@@ -266,25 +266,30 @@
             <div>
               <div class="section-kicker">FIRST-TIME DEVICE SETUP</div>
               <h2>Install NoodleAI INT8 firmware</h2>
-              <p>Flash your Waveshare ESP32-S3-Matrix over USB. No PlatformIO or compiler required on the user's computer.</p>
+              <p>Install NoodleAI INT8 on a Waveshare ESP32-S3 Matrix or a generic ESP32 with MPU6050. The installer detects the chip family automatically.</p>
             </div>
-            <span class="mode-chip">ESP32-S3 · INT8</span>
+            <span class="mode-chip">ESP32 / ESP32-S3 · INT8</span>
           </div>
 
           <div class="flash-steps" aria-label="Firmware installation steps">
-            <div class="flash-step"><span class="flash-step-number">1</span><div><strong>Connect via USB</strong><p>Use a data-capable USB cable and connect the ESP32-S3-Matrix to your computer.</p></div></div>
+            <div class="flash-step"><span class="flash-step-number">1</span><div><strong>Connect via USB</strong><p>Connect your ESP32-S3 Matrix or ESP32 DevKit using a data-capable USB cable.</p></div></div>
             <div class="flash-step"><span class="flash-step-number">2</span><div><strong>Choose the serial device</strong><p>Use a browser with Web Serial support (such as Chrome or Edge). Close other serial monitors first.</p></div></div>
             <div class="flash-step"><span class="flash-step-number">3</span><div><strong>Install the firmware</strong><p>Open the installer below, follow its prompts, and wait until flashing finishes. Reconnect over Bluetooth afterward.</p></div></div>
           </div>
 
           <div class="flash-warning" role="note">
             <strong>Back up saved models before flashing.</strong>
-            <p>A factory installation can erase flash contents, including FFat-stored models or datasets. It is intended for the Waveshare ESP32-S3-Matrix, not other ESP32-S3 boards. Use compatible firmware and partitions.</p>
+            <p>A factory installation can erase FFat-stored models and other flash contents. The ESP32-S3 build is for the Waveshare ESP32-S3 Matrix (QMI8658); the ESP32 build is for a classic 4 MB ESP32 with an external MPU6050. Do not use these images on other board/sensor configurations.</p>
           </div>
 
           <div class="flash-installer-card">
             <span class="micro-label">FIRMWARE · USB</span>
-            <h3>ESP32-S3 Matrix — packed INT8</h3>
+            <h3>ESP32-S3 Matrix / ESP32 + MPU6050 — INT8</h3>
+            <div class="flash-board-options" aria-label="Supported hardware">
+              <div class="flash-board-option"><strong>Waveshare ESP32-S3 Matrix</strong><span>Built-in QMI8658 IMU · 8×8 LED matrix · BOOT button</span></div>
+              <div class="flash-board-option"><strong>Generic ESP32 DevKit (4 MB flash)</strong><span>External MPU6050: 3V3→VCC, GND→GND, GPIO21→SDA, GPIO22→SCL. Gesture button: GPIO27→GND.</span></div>
+            </div>
+            <p class="flash-note">One installer serves both variants. Connect one board at a time; the detected ESP32 or ESP32-S3 chip selects the corresponding factory image.</p>
             <p id="firmwareInstallStatus" class="flash-status" role="status" aria-live="polite">Checking firmware availability…</p>
             <div id="firmwareInstallControl" hidden>
               <esp-web-install-button manifest="firmware/manifest.json">
@@ -293,13 +298,13 @@
                 <span slot="not-allowed">USB flashing needs HTTPS (or localhost) and permission to access the serial device.</span>
               </esp-web-install-button>
             </div>
-            <p class="flash-note"><strong>Important:</strong> The bundled factory firmware predates continuous Madgwick streaming. For Accel + Roll + Pitch and updated velocity preprocessing, build and flash the accompanying firmware source; publishing a new factory binary is a separate step.</p>
-            <p class="flash-note">This installs the ESP32-S3 INT8 runtime. Neural-network models are trained in the browser and deployed separately over BLE in <strong>Deploy &amp; Infer</strong>.</p>
+            <p class="flash-note"><strong>Before publishing:</strong> Make sure both images were built from the current INT8 firmware source. An older image may not support continuous Madgwick, 0.5 Hz gyro HPF, or the latest NAI4 preprocessing identifiers.</p>
+            <p class="flash-note">This installs the board-specific INT8 runtime. Neural-network models are trained in the browser and deployed separately over BLE in <strong>Deploy &amp; Infer</strong>.</p>
           </div>
 
           <div class="flash-troubleshoot">
             <h3>Having trouble connecting?</h3>
-            <p>Use a USB data cable, disconnect any serial terminal, and reconnect the board. Some ESP32-S3 boards require entering download mode manually using BOOT and RESET. Reload this page after publishing a newer firmware binary.</p>
+            <p>Use a USB data cable, close any serial terminal, and reconnect the board. Some ESP32 or ESP32-S3 boards require entering download mode manually with BOOT/FLASH and EN/RESET. On the generic ESP32, keep the external gesture button on GPIO27; do not hold GPIO0 at power-up. Reload after publishing a newer binary.</p>
             <p>For maintainers: read <a href="README_FIRMWARE_INSTALLER.md">firmware publishing instructions</a>. For application-only updates that preserve FFat, use the documented esptool command instead.</p>
           </div>
         </div>
@@ -464,7 +469,7 @@
   <script src="js/metrics.js?v=mode1-dual-precision-v2"></script>
   <script src="js/app.js?v=mode1-gyro-hpf05-v1"></script>
   <script src="js/data-viewer.js?v=viewer-orientation-v2"></script>
-  <script src="js/firmware-installer.js?v=1"></script>
+  <script src="js/firmware-installer.js?v=dual-esp32-1"></script>
   <script>
     document.getElementById('aboutOpenFlashBtn')?.addEventListener('click', function () {
       document.querySelector('[data-tab="firmware"]')?.click();

@@ -1,35 +1,50 @@
-# Browser-based NoodleAI firmware installation (ESP32-S3 Matrix)
+# NoodleAI INT8 web flasher — ESP32 and ESP32-S3
 
-The NoodleAI Mode 1 website includes a **Flash Firmware** tab powered by
-[ESP Web Tools](https://esphome.github.io/esp-web-tools/). Firmware flashing
-uses USB/Web Serial, **not BLE**. BLE is used later for model deployment.
+The **Flash Firmware** tab uses ESP Web Tools to install one of two *different*
+4 MB factory images. **ESP Web Tools detects the chip family, not the IMU
+board**: flash only the listed hardware combination.
 
-## 1. Publish the compiled INT8 factory image
+| Board | IMU | Gesture button | Factory image |
+| --- | --- | --- | --- |
+| Waveshare ESP32-S3 Matrix | Onboard QMI8658 | BOOT | `noodleai-esp32s3-int8-factory.bin` |
+| Generic ESP32-WROOM DevKit (4 MB flash) | External MPU6050 over I²C | External GPIO27 → GND (recommended) | `noodleai-esp32-int8-factory.bin` |
 
-After building the PlatformIO environment `esp32-s3-matrix-int8` and merging
-bootloader, partition table, boot_app0, and application into one factory image,
-copy it into the website:
+## Generic ESP32 + MPU6050 wiring
+
+| ESP32 | MPU6050 breakout |
+| --- | --- |
+| 3V3 | VCC (3.3 V-compatible breakout) |
+| GND | GND |
+| GPIO21 | SDA |
+| GPIO22 | SCL |
+
+The external *normally-open* gesture button connects GPIO27 to GND; use
+`INPUT_PULLUP`. No capacitor is needed for short, quiet wiring. GPIO0 remains
+a boot strapping pin: do not hold it while powering up. Confirm that your
+firmware build enables GPIO27 for the gesture button.
+
+## 1. Produce chip-specific merged factory images
+
+Run the command in each corresponding PlatformIO build directory. **The ESP32
+bootloader begins at 0x1000, while ESP32-S3 begins at 0x0000.**
+
+### Classic ESP32 + MPU6050
 
 ```bash
-# Run in the website's repository root (the folder with index.html):
-python3 tools/publish_firmware.py \
-  firmware/.pio/build/esp32-s3-matrix-int8/noodleai-esp32s3-int8-factory.bin
+cd nai/firmware/.pio/build/esp32-mpu6050-int8
+python -m esptool --chip esp32 merge-bin \
+  -o noodleai-esp32-int8-factory.bin \
+  --flash-mode dio --flash-size 4MB \
+  0x1000 bootloader.bin \
+  0x8000 partitions.bin \
+  0xe000 ~/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin \
+  0x10000 firmware.bin
 ```
 
-**Important:** If the web files are in a `web/` subfolder instead of the `nai/` repository
-root, use the sibling firmware path from that subfolder:
+### ESP32-S3 Matrix
 
 ```bash
-python3 tools/publish_firmware.py \
-  ../firmware/.pio/build/esp32-s3-matrix-int8/noodleai-esp32s3-int8-factory.bin
-```
-
-Or supply the **absolute path** to the merged `.bin`.
-
-If the merged binary has not yet been created, run in the PlatformIO
-`.pio/build/esp32-s3-matrix-int8/` directory:
-
-```bash
+cd nai/firmware/.pio/build/esp32-s3-matrix-int8
 python -m esptool --chip esp32s3 merge-bin \
   -o noodleai-esp32s3-int8-factory.bin \
   --flash-mode dio --flash-size 4MB \
@@ -39,82 +54,65 @@ python -m esptool --chip esp32s3 merge-bin \
   0x10000 firmware.bin
 ```
 
-Verify the offsets against your board's actual PlatformIO upload settings.
-The current NoodleAI ESP32-S3 Matrix `platformio.ini` specifies DIO and 4MB
-flash. Confirm these settings on your physical board before publication.
-A merged image is not universal across all ESP32-S3 boards.
+Use the actual `platformio.ini` flash mode/frequency and partitions for the
+build. The fixed offsets above match this NoodleAI 4 MB layout, but do not
+assume they apply to other projects. `merge-bin` success alone does not prove
+the board firmware is compatible.
 
-The publishing helper copies the image to:
-
-`firmware/noodleai-esp32s3-int8-factory.bin`
-
-and writes the single-build ESP Web Tools manifest to:
-
-`firmware/manifest.json`
-
-The helper assigns a SHA-based firmware version by default, so updating the
-binary updates the published version. Run with `--version 1.2.3-int8` to
-specify your own version string. The helper validates the basic image header,
-not the underlying board, firmware features, or partition layout.
-
-## 2. Publish GitHub Pages
-
-Commit the static web files, `firmware/manifest.json`, and the merged binary.
-Confirm Pages is configured to serve the directory containing `index.html`
-(e.g. repository root). If the binary is missing, the website safely hides
-the install button and displays the reason. Avoid Git LFS for the binary when
-GitHub Pages is serving it; use a normal Git-tracked `.bin` file.
+## 2. Publish both binaries (from `nai/web/`)
 
 ```bash
-git add index.html style.css js/app.js js/firmware-installer.js \
-  firmware/manifest.json firmware/noodleai-esp32s3-int8-factory.bin \
-  README.md README_FIRMWARE_INSTALLER.md tools/publish_firmware.py
-git commit -m "Add ESP32-S3 INT8 web installer"
+python3 tools/publish_firmware.py --chip esp32 \
+  ../firmware/.pio/build/esp32-mpu6050-int8/noodleai-esp32-int8-factory.bin
+python3 tools/publish_firmware.py --chip esp32s3 \
+  ../firmware/.pio/build/esp32-s3-matrix-int8/noodleai-esp32s3-int8-factory.bin
+```
+
+The helper validates the merged-image layout, copies the correct filename into
+`web/firmware/`, and updates **only that chip family's manifest build**.
+Both entries are retained. You may also copy the binaries manually and keep
+the supplied two-build `manifest.json`.
+
+**Important:** The downloadable web template includes the previously packaged
+ESP32-S3 image but **does not contain your locally built generic ESP32
+binary**. Publish your own current images before deploying this website.
+For the newest continuous Madgwick and gyro-HPF features, rebuild both from
+the latest firmware source rather than reusing stale factory binaries.
+
+## 3. Deploy GitHub Pages
+
+```bash
+cd nai
+# if 'web/' is the folder served by GitHub Pages:
+git add web/index.html web/style.css web/js/firmware-installer.js \
+  web/tools/publish_firmware.py web/README_FIRMWARE_INSTALLER.md \
+  web/firmware/manifest.json web/firmware/*.bin
+git commit -m "Enable ESP32 and ESP32-S3 NoodleAI web flashing"
 git push
 ```
 
-The website must be served over **HTTPS** (or localhost for development) and
-the browser must support Web Serial. Desktop Chrome or Edge is recommended.
+If the `web/` directory is a **separate** Git repository, run Git from inside
+that directory and omit the `web/` prefixes. Confirm the published manifest
+URL loads and both `.bin` paths return HTTP 200. The installer requires both
+images before exposing the Flash button, to avoid offering a chip with a
+missing image. Use HTTPS (or localhost) and a desktop Chromium-based browser
+with Web Serial support.
 
-## 3. First-time installation
+For a first install, connect the board by USB, open **Flash Firmware**, and
+click **Connect & Install Firmware**. Once flashed, use BLE to upload the NAI4
+INT8 model. Firmware installation may erase saved FFat models; back up
+important data and verify partition compatibility.
 
-1. Connect the **Waveshare ESP32-S3 Matrix** using a data-capable USB cable.
-2. Open the NoodleAI page → **Flash Firmware**.
-3. Choose **Connect & Install Firmware** and select the USB serial device.
-4. Follow ESP Web Tools prompts. On some boards, BOOT/RESET may be needed
-   for entering download mode.
-5. When flashing completes, reconnect the device over BLE on the **Live IMU**
-   and **Deploy & Infer** tabs, then deploy a compatible NAI4 INT8 model.
+### Application-only update
 
-**WARNING:** A factory install may erase flash, including saved FFat models.
-Back up model packages/datasets before flashing. The installer manifest asks
-ESP Web Tools to present an erase-choice prompt when treated as a new install.
-Do not assume firmware upgrades preserve data if the partition table changes.
-
-## 4. Application-only CLI update (advanced)
-
-If the existing board already has the matching bootloader/partition layout,
-an application-only update generally preserves FFat. Example:
+With the *same existing partition layout*, an application-only write at
+`0x10000` may preserve FFat, but must use the matching board image and port.
+For a generic ESP32, for example:
 
 ```bash
-python -m esptool --chip esp32s3 --port /dev/ttyACM0 \
-  --baud 460800 write-flash 0x10000 \
-  ../firmware/.pio/build/esp32-s3-matrix-int8/firmware.bin
+python -m esptool --chip esp32 --port /dev/ttyUSB0 write-flash \
+  0x10000 firmware/.pio/build/esp32-mpu6050-int8/firmware.bin
 ```
 
-Confirm the correct port, application offset, and partition table before
-using this. Do not use application-only updates across incompatible flash
-partition layouts or firmware variants.
-
-## 5. Notes for maintainers
-
-- The website hosts **INT8 firmware only**; this installer does not build or
-  flash FP32 firmware. NAI4 models are deployed separately over BLE.
-- ESP Web Tools chooses the detected *chip family*. It cannot distinguish
-  between all physical ESP32-S3 board revisions. Label the target clearly.
-- Keep the published firmware aligned with the web's NAI4 preprocessing and
-  INT8 model format. Building a new binary without retesting compatibility
-  does not guarantee that trained models will execute correctly.
-- The installer intentionally does **not** attempt to flash automatically.
-- ESP Web Tools source and documented manifest schema:
-  https://esphome.github.io/esp-web-tools/
+This example is for a local `nai/` project root; adapt the serial port and
+paths for your system. Do not use it across incompatible partitions.

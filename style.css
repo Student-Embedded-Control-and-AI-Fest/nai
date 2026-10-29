@@ -203,3 +203,10 @@ footer{display:flex;justify-content:space-between;gap:14px;color:#5e6d81;font-si
 .viewer-orientation .viewer-graphs{margin:0 18px}
 .viewer-orientation .viewer-footnote{margin:14px 20px 20px}
 @media(max-width:580px){.viewer-orientation>summary{padding:14px}.viewer-orientation-disclosure{display:none}.viewer-orientation .viewer-graphs{margin:0 10px}}
+
+/* Firmware installation: supported boards side by side. */
+.flash-board-options{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:15px 0 10px}
+.flash-board-option{border:1px solid #d4e3f1;background:#fff;border-radius:11px;padding:12px 14px}
+.flash-board-option strong{display:block;font-size:.83rem;color:#1c3856;margin-bottom:5px}
+.flash-board-option span{font-size:.76rem;color:#4d657c;line-height:1.55;display:block}
+@media(max-width:720px){.flash-board-options{grid-template-columns:1fr}}

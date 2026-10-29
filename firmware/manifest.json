@@ -1,6 +1,6 @@
 {
-  "name": "NoodleAI Mode 1 ESP32-S3 Matrix INT8",
-  "version": "int8-edcb8baceb",
+  "name": "NoodleAI INT8 — ESP32 / ESP32-S3",
+  "version": "int8-cad357b3b5",
   "new_install_prompt_erase": true,
   "new_install_improv_wait_time": 0,
   "builds": [
@@ -10,6 +10,16 @@
       "parts": [
         {
           "path": "noodleai-esp32s3-int8-factory.bin",
+          "offset": 0
+        }
+      ]
+    },
+    {
+      "chipFamily": "ESP32",
+      "improv": false,
+      "parts": [
+        {
+          "path": "noodleai-esp32-int8-factory.bin",
           "offset": 0
         }
       ]
