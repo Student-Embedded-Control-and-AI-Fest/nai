@@ -38,10 +38,13 @@ The onboard IMU provides raw `ax,ay,az` (g) and `gx,gy,gz` (deg/s) at a nominal 
 | **Accel direction + magnitude** | 9 | 4 | LPF5 → resample XYZ → unit direction + magnitude; **no centering**, standardize **magnitude only** | 400 |
 | **Gyroscope** | 2 | 3 | Gyro bias correction → LPF5 → resample → per-axis gesture mean subtraction → StandardScaler | 300 |
 | **Accel + Gyro** | 3 | 6 | Gyro bias correction → LPF5 on six channels → resample → center each axis → StandardScaler | 600 |
-| **Estimated Velocity** | 5 | 3 | Gyro bias correction → LPF5 → Madgwick orientation → world-frame gravity subtraction → integration + endpoint correction → resample → StandardScaler | 300 |
+| **Estimated Velocity** | 5 | 3 | Startup gyro bias correction → continuous Madgwick + gesture-local LPF5 acceleration → world-frame gravity subtraction → per-gesture integration + endpoint correction → resample → StandardScaler | 300 |
 
 For direction + magnitude, let filtered/resampled acceleration be `a=(ax,ay,az)` and `m=||a||`. The four channels are `(ax/m,ay/m,az/m,m)` where defined. For `m ≤ 0.001 g`, direction is set to `(0,0,0)`; magnitude is retained. A stationary sensor typically sees approximately `1 g`; in free fall the measured magnitude approaches zero after filter settling. This represents the measured acceleration vector, not independently measured gravitational acceleration.
 
 These descriptions apply to **Mode 1**. A continuous/sliding-window Mode 2 implementation has different acquisition and preprocessing behavior and should not be assumed identical.
 
 For full firmware/model compatibility details, also consult [README_INPUT_PREPROCESSING.md](README_INPUT_PREPROCESSING.md). Previously trained models must match their firmware's preprocessing version.
+
+
+**Update:** New input kind `accel+roll+pitch` (5 channels, NAI4 ID 10) uses a continuous Madgwick quaternion updated between BOOT holds. See README_CONTINUOUS_MADGWICK.md.

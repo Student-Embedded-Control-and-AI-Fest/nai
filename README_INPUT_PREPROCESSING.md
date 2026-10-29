@@ -23,7 +23,7 @@ y[t] = y[t-1] + beta × (x[t] - y[t-1]), t >= 1
 
 No high-pass-filter stage, switch, or compatibility fallback is provided.
 
-## Five selectable input kinds
+## Six selectable input kinds
 
 | Input kind | NAI4 ID | Samples per time point | Processing after LPF (before scaler) | N=100 input |
 |---|---:|---|---|---:|
@@ -31,7 +31,8 @@ No high-pass-filter stage, switch, or compatibility fallback is provided.
 | **Accel direction + magnitude** | **9** | `ux, uy, uz, m` | Resample filtered acceleration XYZ, then compute unit direction and magnitude **without centering** | **400** |
 | **Gyroscope** | 2 | `gx, gy, gz` | Resample, then subtract the gesture mean of each axis | 300 |
 | **Accel + Gyro** | 3 | `ax, ay, az, gx, gy, gz` | Resample, then subtract the gesture mean of each of the six axes | 600 |
-| **Estimated Velocity** | 5 | `vx, vy, vz` (m/s) | LPF on both raw accel and gyro, Madgwick orientation, gravity subtraction in world frame, trapezoidal integration, endpoint correction, then resampling | 300 |
+| **Estimated Velocity** | 5 | `vx, vy, vz` (m/s) | Per-gesture LPF acceleration, continuous device Madgwick orientation, gravity subtraction, gesture-local integration and endpoint correction, then resampling | 300 |
+| **Accel XYZ + Roll + Pitch** | **10** | `ax,ay,az,roll,pitch` | LPF5 accel with continuous device quaternion-derived gravity roll/pitch in radians; no per-gesture mean subtraction | **500** |
 
 **Mean centering** is within *each gesture*, and only for the three direct motion-feature kinds. It subtracts an axis mean but **does not divide by the gesture's standard deviation**. `StandardScaler` remains a separate training-derived operation afterward.
 
@@ -48,7 +49,7 @@ output = [ux,uy,uz,m]
 
 At rest, its LPF magnitude is approximately **1 g**; under sustained free fall it is approximately **0 g**, with a filter transition delay. This is total accelerometer specific-force magnitude, *not a separate measurement of gravity*. To **preserve unit direction at the FP32 network input**, only each magnitude feature receives training-derived standardization; the direction channels have stored scaler `mean=0, scale=1` (with small errors possible after INT8 quantization).
 
-For **Estimated Velocity**, the 5 Hz LPF precedes Madgwick, the gravity component is removed after orientation estimation, and velocity integration is corrected at the endpoints. This feature is a short-gesture classifier input, **not** a drift-free inertial-navigation estimate. Startup gyroscope bias calibration is separate from mean centering.
+For **Estimated Velocity**, a separate continuous 5 Hz IMU filter feeds Madgwick while a gesture-local LPF prepares acceleration for world-frame gravity subtraction. Velocity integration resets and is corrected at each BOOT-delimited gesture. The quaternion is never reset by BOOT. This feature is a short-gesture classifier input, **not** a drift-free inertial-navigation estimate. Startup gyroscope bias calibration is separate from mean centering.
 
 ## Model metadata and compatibility
 
@@ -56,8 +57,12 @@ For **Estimated Velocity**, the 5 Hz LPF precedes Madgwick, the gravity componen
 - **ID 9** identifies the new unit-direction plus physical LPF magnitude feature. The old magnitude IDs 7 and 8 are not supported.
 - The firmware explicitly **rejects older models** lacking the LPF5 flag or carrying unsupported preprocessing flags, including models built with the previous filters. This is intentional: the input distributions differ.
 - To deploy after upgrading firmware, **retrain and re-export** from saved *raw* gesture data (or record fresh gestures), and deploy the new matching NAI4 model. Old `.npz` datasets *without* `raw_data`/`raw_offsets` cannot reproduce the required LPF.
-- The BOOT-captured raw gestures need not be recollected if their original raw six-axis samples are present. The class manager still permits deleting classes with recorded examples (with confirmation), and requires retraining after changes.
+- For direct input kinds, BOOT-captured gestures need not be recollected if their raw six-axis samples are present; for continuous orientation they must be recollected with matching quaternion samples. The class manager still permits deleting classes with recorded examples (with confirmation), and requires retraining after changes.
 
 ## Validation status
 
 Host tests cover LPF5 C++/JavaScript agreement, centering, unit direction, free-fall and 1-g behavior, five input kinds, model flags and rejection of older packages, and class deletion. Full ESP32-S3 PlatformIO compilation, physical-device inference, browser-training integration, and BLE deployment still require verification on the target system.
+
+## Continuous Madgwick update
+
+See **README_CONTINUOUS_MADGWICK.md** for the new device-streamed quaternion protocol, input representation 10, and the factory-installer limitation. The bundled factory binary is not yet rebuilt for continuous Madgwick.

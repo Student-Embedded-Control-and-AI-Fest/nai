@@ -7,6 +7,7 @@ const MAX_PACKAGE_BYTES = 550 * 1024;
 const FLAG_BINARY_CLASSIFIER = 0x0001;
 const FLAG_INT8 = 0x0002;
 const FLAG_LPF5 = 0x0008; // Required for all new NAI4 models: 5 Hz LPF before resampling.
+const FLAG_CONT_ORIENTATION = 0x0010; // Quaternion estimated continuously on device, never reset by BOOT.
 const QCFG_MAGIC = 'Q8M1';
 
 const REP = {
@@ -16,7 +17,8 @@ const REP = {
   'quaternion': { code: 4, channels: 4 },
   'velocity': { code: 5, channels: 3 },
   'velocity+quaternion': { code: 6, channels: 7 },
-  'accel-dir+mag': { code: 9, channels: 4 }, // unit direction + LPF acceleration magnitude
+  'accel-dir+mag': { code: 9, channels: 4 },
+  'accel+roll+pitch': { code: 10, channels: 5 }, // unit direction + LPF acceleration magnitude
 };
 const CODE_TO_REP = Object.fromEntries(Object.entries(REP).map(([k,v]) => [v.code, k]));
 // Acceleration in g. Directions below this magnitude are set to zero, not amplified.
@@ -185,6 +187,17 @@ function parseDatasetArrays(a) {
     }
   }
 
+  if (a.quat_data) {
+    if (!rawRows) throw new Error('quat_data requires raw_data and raw_offsets');
+    if (a.quat_data.shape.length!==2 || a.quat_data.shape[1]!==4 ||
+        a.quat_data.shape[0]!==a.raw_data.shape[0])
+      throw new Error('quat_data must be [total_raw_samples,4]');
+    let row=0;
+    for (const r of rawRows) {
+      r.quat=Float32Array.from(a.quat_data.data.slice(row*4,(row+r.length)*4));
+      row+=r.length;
+    }
+  }
   const sampleRate = Number(scalar(a, 'sample_rate_hz', SAMPLE_RATE_HZ));
   return { Xrows, y, labels, N, sampleRate, rawRows, width, fileName: '' };
 }
@@ -344,85 +357,45 @@ function qMul(a,b) {
 function qRotate(q,v) {
   return qMul(qMul(q,[0,v[0],v[1],v[2]]),qConj(q)).slice(1);
 }
-function cross(a,b) { return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]; }
 function dot(a,b) { return a.reduce((s,v,i)=>s+v*b[i],0); }
 
-function quatAlignAccelToWorldZ(acc) {
-  let u = Array.from(acc, Number);
-  let n = Math.hypot(...u);
-  if (!Number.isFinite(n) || n < 1e-8) return [1,0,0,0];
-  u=u.map(v=>v/n);
-  const v=[0,0,1], d=dot(u,v);
-  if (d < -0.999999) {
-    const base=Math.abs(u[0])<0.9?[1,0,0]:[0,1,0];
-    let axis=cross(u,base); n=Math.hypot(...axis); axis=axis.map(x=>x/n);
-    return [0,...axis];
-  }
-  return qNorm([1+d,...cross(u,v)]);
-}
-
-function madgwickUpdateImu(q, accel, gyroDps, dt, beta=MADGWICK_BETA) {
-  let [q1,q2,q3,q4]=q;
-  const rad=Math.PI/180;
-  const [gx,gy,gz]=gyroDps.map(v=>v*rad);
-  let [ax,ay,az]=accel;
-  let qdot=[
-    0.5*(-q2*gx-q3*gy-q4*gz),
-    0.5*( q1*gx+q3*gz-q4*gy),
-    0.5*( q1*gy-q2*gz+q4*gx),
-    0.5*( q1*gz+q2*gy-q3*gx),
-  ];
-  const an=Math.hypot(ax,ay,az);
-  if (Number.isFinite(an) && an>1e-8) {
-    ax/=an; ay/=an; az/=an;
-    const _2q1=2*q1,_2q2=2*q2,_2q3=2*q3,_2q4=2*q4;
-    const _4q1=4*q1,_4q2=4*q2,_4q3=4*q3,_8q2=8*q2,_8q3=8*q3;
-    const q1q1=q1*q1,q2q2=q2*q2,q3q3=q3*q3,q4q4=q4*q4;
-    let s=[
-      _4q1*q3q3+_2q3*ax+_4q1*q2q2-_2q2*ay,
-      _4q2*q4q4-_2q4*ax+4*q1q1*q2-_2q1*ay-_4q2+_8q2*q2q2+_8q2*q3q3+_4q2*az,
-      4*q1q1*q3+_2q1*ax+_4q3*q4q4-_2q4*ay-_4q3+_8q3*q2q2+_8q3*q3q3+_4q3*az,
-      4*q2q2*q4-_2q2*ax+4*q3q3*q4-_2q3*ay,
-    ];
-    const sn=Math.hypot(...s);
-    if (Number.isFinite(sn) && sn>1e-12) {
-      s=s.map(v=>v/sn);
-      qdot=qdot.map((v,i)=>v-beta*s[i]);
+// Derived gestures use the same quaternion samples computed by the device
+// during acquisition, including motion between BOOT holds. No local Madgwick
+// reinitialization is permitted for continuous-orientation representations.
+function deriveContinuousFeatures(filtered, quat4, T, rep, sampleRate) {
+  if (!quat4 || quat4.length!==T*4)
+    throw new Error('This input kind requires saved continuous Madgwick quaternions. Record new gestures with updated firmware.');
+  const ch=REP[rep].channels, out=new Float32Array(T*ch), dt=1/sampleRate;
+  let prevQ=null, prevA=null, velocity=[0,0,0];
+  for(let k=0;k<T;k++){
+    const r=k*6,d=k*ch;
+    let q=qNorm(Array.from(quat4.slice(k*4,k*4+4)));
+    if(prevQ && dot(q,prevQ)<0)q=q.map(x=>-x);
+    prevQ=q;
+    if(rep==='accel+roll+pitch'){
+      const [w,x,y,z]=q;
+      out[d]=filtered[r];out[d+1]=filtered[r+1];out[d+2]=filtered[r+2];
+      out[d+3]=Math.fround(Math.atan2(2*(w*x+y*z),1-2*(x*x+y*y)));
+      out[d+4]=Math.fround(Math.asin(Math.max(-1,Math.min(1,2*(w*y-z*x)))));
+      continue;
+    }
+    if(rep==='quaternion'||rep==='velocity+quaternion') {
+      out.set(q,d+(rep==='quaternion'?0:3));
+    }
+    if(rep==='velocity'||rep==='velocity+quaternion'){
+      const aw=qRotate(q,[filtered[r],filtered[r+1],filtered[r+2]]);
+      const curr=[aw[0]*GRAVITY_MPS2,aw[1]*GRAVITY_MPS2,(aw[2]-1)*GRAVITY_MPS2];
+      if(prevA)for(let c=0;c<3;c++)velocity[c]+=0.5*(prevA[c]+curr[c])*dt;
+      prevA=curr;
+      for(let c=0;c<3;c++)out[d+c]=Math.fround(velocity[c]);
     }
   }
-  return qNorm(q.map((v,i)=>v+qdot[i]*dt));
-}
-
-function deriveQuatVelocity(rawObj, sampleRate=SAMPLE_RATE_HZ) {
-  const raw=rawObj.data, T=rawObj.length, dt=1/sampleRate;
-  const get3=(k,o)=>[raw[k*6+o],raw[k*6+o+1],raw[k*6+o+2]];
-  let qAbs=quatAlignAccelToWorldZ(get3(0,0));
-  const qRef=qAbs.slice();
-  const quat=new Float32Array(T*4);
-  const vel=new Float32Array(T*3);
-  quat.set([1,0,0,0],0);
-  let aPrev=qRotate(qAbs,get3(0,0)).map((v,i)=>(v-(i===2?1:0))*GRAVITY_MPS2);
-
-  for (let k=1;k<T;k++) {
-    qAbs=madgwickUpdateImu(qAbs,get3(k,0),get3(k,3),dt);
-    let qr=qNorm(qMul(qConj(qRef),qAbs));
-    const prev=[quat[(k-1)*4],quat[(k-1)*4+1],quat[(k-1)*4+2],quat[(k-1)*4+3]];
-    if (dot(qr,prev)<0) qr=qr.map(v=>-v);
-    quat.set(qr,k*4);
-
-    const aw=qRotate(qAbs,get3(k,0));
-    const a=aw.map((v,i)=>(v-(i===2?1:0))*GRAVITY_MPS2);
-    for (let c=0;c<3;c++) vel[k*3+c]=vel[(k-1)*3+c]+0.5*(aPrev[c]+a[c])*dt;
-    aPrev=a;
+  if(rep==='velocity'||rep==='velocity+quaternion'){
+    const end=Array.from(out.slice((T-1)*ch,(T-1)*ch+3));
+    for(let k=0;k<T;k++)for(let c=0;c<3;c++)out[k*ch+c]=Math.fround(out[k*ch+c]-(k/(T-1))*end[c]);
+    for(let c=0;c<3;c++){out[c]=0;out[(T-1)*ch+c]=0;}
   }
-  const end=[vel[(T-1)*3],vel[(T-1)*3+1],vel[(T-1)*3+2]];
-  for (let k=0;k<T;k++) {
-    const a=k/(T-1);
-    for (let c=0;c<3;c++) vel[k*3+c]-=a*end[c];
-  }
-  vel[0]=vel[1]=vel[2]=0;
-  vel[(T-1)*3]=vel[(T-1)*3+1]=vel[(T-1)*3+2]=0;
-  return {quat,vel,T};
+  return out;
 }
 
 function normalizeQuatRows(data, rows, offset=0, stride=4) {
@@ -462,7 +435,7 @@ function buildRepresentationOne(ds, sampleIndex, rep) {
   const rawObj=ds.rawRows[sampleIndex];
   const T=rawObj.length;
   const idx=rep==='gyro'?[3,4,5]:rep==='accel+gyro'?[0,1,2,3,4,5]:[0,1,2];
-  const filtered=filterRaw6Lpf5(rawObj.data,T,ds.sampleRate,rep==='quaternion'||rep==='velocity'||rep==='velocity+quaternion'?[0,1,2,3,4,5]:idx);
+  const filtered=filterRaw6Lpf5(rawObj.data,T,ds.sampleRate,rep==='quaternion'||rep==='velocity'||rep==='velocity+quaternion'||rep==='accel+roll+pitch'?[0,1,2,3,4,5]:idx);
   if (rep==='accel'||rep==='gyro'||rep==='accel+gyro'||rep==='accel-dir+mag') {
     const selected=new Float32Array(T*idx.length);
     for(let r=0;r<T;r++)for(let c=0;c<idx.length;c++)selected[r*idx.length+c]=filtered[r*6+idx[c]];
@@ -480,16 +453,15 @@ function buildRepresentationOne(ds, sampleIndex, rep) {
     }
     return centerColumns(xyz,N,idx.length); // Center each direct IMU axis per gesture.
   }
-  const d=deriveQuatVelocity({data:filtered,length:T},ds.sampleRate);
-  if(rep==='quaternion')return normalizeQuatRows(resample(d.quat,d.T,4,N),N);
-  if(rep==='velocity')return resample(d.vel,d.T,3,N);
-  const both=new Float32Array(T*7);
-  for(let r=0;r<T;r++){
-    both[r*7]=d.vel[r*3];both[r*7+1]=d.vel[r*3+1];both[r*7+2]=d.vel[r*3+2];
-    both[r*7+3]=d.quat[r*4];both[r*7+4]=d.quat[r*4+1];
-    both[r*7+5]=d.quat[r*4+2];both[r*7+6]=d.quat[r*4+3];
-  }
-  return normalizeQuatRows(resample(both,d.T,7,N),N,3,7);
+  if (!rawObj.quat || rawObj.quat.length!==T*4)
+    throw new Error(`${rep} needs continuous quaternion samples. Existing raw-only datasets cannot reproduce the device state; record new gestures.`);
+  const continuous=deriveContinuousFeatures(filtered,rawObj.quat,T,rep,ds.sampleRate);
+  const channels=REP[rep].channels;
+  const converted=resample(continuous,T,channels,N);
+  if(rep==='quaternion')return normalizeQuatRows(converted,N);
+  if(rep==='velocity+quaternion')return normalizeQuatRows(converted,N,3,7);
+  return converted;
+
 }
 
 function buildRepresentationDataset(ds, rep) {
@@ -648,7 +620,8 @@ function makeCfg(labels,N,inputDim,dims,rep,binary,quant=null) {
   const out=new Uint8Array(total),dv=new DataView(out.buffer);
   out.set([0x4e,0x41,0x49,0x34],0); // NAI4
   let o=4;
-  const flags=(binary?FLAG_BINARY_CLASSIFIER:0)|(quant?FLAG_INT8:0)|FLAG_LPF5;
+  const flags=(binary?FLAG_BINARY_CLASSIFIER:0)|(quant?FLAG_INT8:0)|FLAG_LPF5|
+    (['quaternion','velocity','velocity+quaternion','accel+roll+pitch'].includes(rep)?FLAG_CONT_ORIENTATION:0);
   const vals=[4,flags,N,SAMPLE_RATE_HZ,dims.length-1,labels.length,inputDim,REP[rep].code];
   vals.forEach(v=>{dv.setUint16(o,v,true);o+=2;});
   dims.forEach(v=>{dv.setUint16(o,v,true);o+=2;});
@@ -962,10 +935,11 @@ function parseCfg(bytes) {
   const v=[];for(let i=0;i<8;i++){v.push(dv.getUint16(o,true));o+=2;}
   const [version,flags,N,rate,nLayers,nClasses,inputDim,reserved]=v;
   if(magic!=='NAI4'||version!==4)throw new Error('NAI4 v4 model required');
-  if((flags&FLAG_LPF5)===0 || (flags&~(FLAG_BINARY_CLASSIFIER|FLAG_INT8|FLAG_LPF5)))
+  if((flags&FLAG_LPF5)===0 || (flags&~(FLAG_BINARY_CLASSIFIER|FLAG_INT8|FLAG_LPF5|FLAG_CONT_ORIENTATION)))
     throw new Error('Incompatible preprocessing: a new 5 Hz LPF model is required. Retrain/export using this web version.');
   const rep=CODE_TO_REP[reserved]||null;
   if(!rep)throw new Error(`Unsupported representation code ${reserved}; retrain with the new input selection.`);
+  if(rep==='accel+roll+pitch' && !(flags&FLAG_CONT_ORIENTATION))throw new Error('Continuous orientation flag is required for accel+roll+pitch');
   const dims=[];for(let i=0;i<nLayers+1;i++){dims.push(dv.getUint16(o,true));o+=2;}
   const dec=new TextDecoder('utf-8'),labels=[];
   for(let i=0;i<nClasses;i++){const n=bytes[o++];labels.push(dec.decode(bytes.slice(o,o+n)));o+=n;}
@@ -1126,11 +1100,19 @@ async function buildDatasetNpzBlob(ds) {
   zip.file('sample_rate_hz.npy', npyI32([ds.sampleRate || SAMPLE_RATE_HZ],[]));
   zip.file('channels.npy', npyUnicode(['ax','ay','az','gx','gy','gz'],[6]));
   zip.file('channel_count.npy', npyI32([6],[]));
-  zip.file('preprocess.npy', npyUnicode(['nai4_raw6_plus_motion_repr_v1'],[]));
+  zip.file('preprocess.npy', npyUnicode(['nai4_raw6_plus_continuous_q_v2'],[]));
   if (ds.rawRows && ds.rawRows.length === n) {
+    const withQuat=ds.rawRows.filter(r=>r.quat && r.quat.length===r.length*4).length;
+    if(withQuat!==0 && withQuat!==n)
+      throw new Error('Dataset mixes old raw-only and new continuous-orientation recordings. Export them separately.');
     const raw=flattenRawRows(ds.rawRows);
     zip.file('raw_offsets.npy', npyI32(raw.offsets,[n+1]));
     zip.file('raw_data.npy', npyF32(raw.data,[raw.totalRows,6]));
+    if(withQuat===n){
+      const qs=new Float32Array(raw.totalRows*4);let off=0;
+      for(const r of ds.rawRows){qs.set(r.quat,off);off+=r.length*4;}
+      zip.file('quat_data.npy',npyF32(qs,[raw.totalRows,4]));
+    }
   }
   return await zip.generateAsync({type:'blob', compression:'DEFLATE'});
 }

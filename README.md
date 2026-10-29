@@ -141,7 +141,7 @@ node tests/test_class_deletion.cjs
 ```
 
 
-**Current preprocessing:** The input-kind dropdown has five choices; see [README_INPUT_PREPROCESSING.md](README_INPUT_PREPROCESSING.md) for the LPF5 preprocessing and the new unit-direction + magnitude representation ID 9.
+**Current preprocessing:** The input-kind dropdown has six choices; see [README_INPUT_PREPROCESSING.md](README_INPUT_PREPROCESSING.md) for the LPF5 preprocessing, unit-direction + magnitude representation ID 9, and continuous Madgwick roll/pitch representation ID 10. The supplied web-installer factory binary is still legacy; see README_CONTINUOUS_MADGWICK.md for rebuilding.
 
 ## Browser-based USB firmware installer
 

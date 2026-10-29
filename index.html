@@ -166,7 +166,7 @@
           </div>
 
           <div class="form-grid train-grid">
-            <label>Input representation<select id="representation"><option value="accel">Accelerometer</option><option value="accel-dir+mag">Accel direction + magnitude (unit Ax, Ay, Az, |a|)</option><option value="gyro">Gyroscope</option><option value="accel+gyro">Accel + Gyro</option><option value="velocity">Estimated Velocity</option></select></label>
+            <label>Input representation<select id="representation"><option value="accel">Accelerometer</option><option value="accel-dir+mag">Accel direction + magnitude (unit Ax, Ay, Az, |a|)</option><option value="gyro">Gyroscope</option><option value="accel+gyro">Accel + Gyro</option><option value="velocity">Estimated Velocity</option><option value="accel+roll+pitch">Accel XYZ + Roll + Pitch (continuous Madgwick)</option></select></label>
             <label>Hidden layers<input id="hiddenLayers" value="32,16" placeholder="32,16"></label>
             <label>Epochs<input id="epochs" type="number" min="10" max="5000" value="300"></label>
           </div>
@@ -291,6 +291,7 @@
                 <span slot="not-allowed">USB flashing needs HTTPS (or localhost) and permission to access the serial device.</span>
               </esp-web-install-button>
             </div>
+            <p class="flash-note"><strong>Important:</strong> The bundled factory firmware predates continuous Madgwick streaming. For Accel + Roll + Pitch and updated velocity preprocessing, build and flash the accompanying firmware source; publishing a new factory binary is a separate step.</p>
             <p class="flash-note">This installs the ESP32-S3 INT8 runtime. Neural-network models are trained in the browser and deployed separately over BLE in <strong>Deploy &amp; Infer</strong>.</p>
           </div>
 
@@ -352,12 +353,12 @@
 
         <div class="panel about-processing">
           <div class="section-head">
-            <div><div class="section-kicker">FEATURE GUIDE</div><h2>How each input representation is prepared</h2><p>These are the five choices available in <strong>Capture &amp; Train → Input representation</strong> for the NoodleAI Mode 1 firmware.</p></div>
+            <div><div class="section-kicker">FEATURE GUIDE</div><h2>How each input representation is prepared</h2><p>These are the six choices available in <strong>Capture &amp; Train → Input representation</strong> for the NoodleAI Mode 1 firmware.</p></div>
             <span class="mode-chip">LPF 5 Hz · Mode 1</span>
           </div>
           <div class="about-shared-steps">
             <div><strong>1</strong><span>Raw IMU · nominal 50 Hz</span></div>
-            <div><strong>2</strong><span>First-order LPF · 5 Hz, reset each gesture</span></div>
+            <div><strong>2</strong><span>First-order LPF · 5 Hz; continuous LPF for Madgwick, gesture-local LPF for feature acceleration</span></div>
             <div><strong>3</strong><span>Resample every BOOT gesture to N time steps (100 by default)</span></div>
             <div><strong>4</strong><span>Apply representation-specific steps and training scaler</span></div>
           </div>
@@ -369,7 +370,8 @@
                 <tr><th scope="row">Accel direction + magnitude <span class="about-code">ux, uy, uz, |a|</span></th><td>4</td><td>Resample filtered XYZ, then split into <strong>unit direction</strong> and <strong>total magnitude</strong>. No per-gesture centering. Apply the training-derived StandardScaler only to magnitude; leave the three unit-direction components unchanged.</td><td>400</td></tr>
                 <tr><th scope="row">Gyroscope <span class="about-code">gx, gy, gz</span></th><td>3</td><td>Use gyro readings corrected for startup bias (when calibration succeeds). Resample, center each axis independently, then apply StandardScaler.</td><td>300</td></tr>
                 <tr><th scope="row">Accel + Gyro <span class="about-code">ax, ay, az, gx, gy, gz</span></th><td>6</td><td>Filter all six channels, resample, center <strong>each of the six axes separately</strong>, then apply StandardScaler.</td><td>600</td></tr>
-                <tr><th scope="row">Estimated Velocity <span class="about-code">vx, vy, vz</span></th><td>3</td><td>Low-pass filter accelerometer and gyro; use <strong>Madgwick orientation</strong>, remove world-frame gravity, integrate acceleration and apply endpoint correction, then resample and standardize.</td><td>300</td></tr>
+                <tr><th scope="row">Estimated Velocity <span class="about-code">vx, vy, vz</span></th><td>3</td><td>Low-pass filter accelerometer per gesture; use <strong>continuous Madgwick orientation</strong>, remove world-frame gravity, integrate acceleration and apply endpoint correction, then resample and standardize.</td><td>300</td></tr>
+                <tr><th scope="row">Accel XYZ + Roll + Pitch <span class="about-code">ax, ay, az, φ, θ</span></th><td>5</td><td>Resample LPF5 acceleration with <strong>gravity-referenced roll and pitch</strong> derived from the quaternion continuously estimated by the device. No per-gesture orientation reset or mean centering.</td><td>500</td></tr>
               </tbody>
             </table>
           </div>

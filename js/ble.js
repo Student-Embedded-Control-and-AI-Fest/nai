@@ -108,16 +108,20 @@ class NoodleAIBLE extends EventTarget {
 
   _onImu(e) {
     const v=e.target.value;
-    if(v.byteLength!==128){this.emit('warning',{text:`IMU packet is ${v.byteLength} bytes; expected 128.`});return;}
+    if(v.byteLength!==128 && v.byteLength!==208){this.emit('warning',{text:`IMU packet is ${v.byteLength} bytes; expected 128 (legacy) or 208 (continuous Q).`});return;}
     const t0=v.getUint32(0,true), count=v.getUint8(4);
     if(count<1||count>5){this.emit('warning',{text:`Invalid IMU sample count ${count}.`});return;}
     this.packetCount++;
     for(let s=0;s<count;s++) {
-      const off=8+s*24;
+      const off=8+s*(v.byteLength===208?40:24);
       this.emit('imu',{sample:{
         t_ms:t0+s*NAI_BLE.SAMPLE_PERIOD_MS,
         ax:v.getFloat32(off+0,true), ay:v.getFloat32(off+4,true), az:v.getFloat32(off+8,true),
         gx:v.getFloat32(off+12,true), gy:v.getFloat32(off+16,true), gz:v.getFloat32(off+20,true),
+        ...(v.byteLength===208?{
+          qw:v.getFloat32(off+24,true),qx:v.getFloat32(off+28,true),
+          qy:v.getFloat32(off+32,true),qz:v.getFloat32(off+36,true),
+        }:{}),
       },packetCount:this.packetCount});
     }
   }
