@@ -2,20 +2,15 @@
 
 #include <Arduino.h>
 #include <noodle.h>
-#if defined(NOODLE_USE_INT8)
 #include <noodle_int8.h>
+#ifndef NOODLE_USE_INT8
+#error "NoodleAI firmware requires NOODLE_USE_INT8"
 #endif
 
 /**
- * NoodleAI runtime adapter.
- *
- * Model parameter files remain in FFat. At build time SRAM_BACKEND selects:
- *   0: Noodle FCNFile streams FP32 parameters from FFat each inference;
- *   1: Noodle FCNMem loads parameters into SRAM once per model activation.
- * Both backends reuse the same two NoodleTensor activation arenas.
- *
- * NAI4 extends the model metadata from raw sensor selection to an input
- * representation. The firmware constructs that representation before predict().
+ * NAI4 INT8-only model-defined MLP executor. Layer weights and packed
+ * metadata stay in FFat; scaler is retained as FP32 before quantization.
+ * The same NAI4/BLE protocol is used on ESP32-S3 and generic ESP32.
  */
 class NoodleAIModel {
 public:
@@ -23,8 +18,6 @@ public:
     static constexpr uint16_t MAX_CLASSES = 10;
     static constexpr uint16_t MAX_DIM = 1536;
     static constexpr uint8_t MAX_LABEL_BYTES = 31;
-#if defined(NOODLE_USE_INT8)
-#endif
 
     enum InputRepresentation : uint16_t {
         REP_ACCEL = 1,
@@ -109,13 +102,7 @@ private:
     bool validateParameterFiles(char slot);
     bool loadScaler(char slot);
     void configureLayers(char slot);
-#if defined(NOODLE_USE_INT8)
     bool readQuantization(NDL_File &file);
-#endif
-#if defined(SRAM_BACKEND) && SRAM_BACKEND
-    bool loadRamParameters();
-    void clearRamParameters();
-#endif
     void initTensorsIfNeeded();
     static bool fileHasSize(const char *name, size_t expected);
     static uint16_t representationChannelCount(InputRepresentation rep);
@@ -139,25 +126,15 @@ private:
     uint16_t _dims[MAX_LAYERS + 1]{};
     float *_mean = nullptr;
     float *_scale = nullptr;
-    FCNFile _layers[MAX_LAYERS]{};  // INT8: wNN + pNN; FP32: wNN + bNN.
-#if defined(NOODLE_USE_INT8)
+    FCNFile _layers[MAX_LAYERS]{};  // INT8 weights wNN and per-output metadata pNN.
     float _inputScale = 1.0f;
     int32_t _inputZeroPoint = 0;
     float _layerOutputScales[MAX_LAYERS]{};
     int32_t _layerOutputZeroPoints[MAX_LAYERS]{};
-#endif
-#if defined(SRAM_BACKEND) && SRAM_BACKEND && !defined(NOODLE_USE_INT8)
-    // FP32 parameter mirrors, loaded once from active FFat slot.
-    // Output-major [O][I] layout is *already* Noodle FCNMem format.
-    FCNMem _ramLayers[MAX_LAYERS]{};
-    float *_ramWeights[MAX_LAYERS]{};
-    float *_ramBiases[MAX_LAYERS]{};
-    size_t _ramParameterBytes = 0;
-#endif
     String _labels[MAX_CLASSES];
 
     char _weightNames[MAX_LAYERS][NOODLE_MAX_FILENAME + 1]{};
-    char _biasNames[MAX_LAYERS][NOODLE_MAX_FILENAME + 1]{};  // INT8: pNN metadata
+    char _biasNames[MAX_LAYERS][NOODLE_MAX_FILENAME + 1]{};  // pNN packed metadata
 
     NoodleTensor _actA{};
     NoodleTensor _actB{};

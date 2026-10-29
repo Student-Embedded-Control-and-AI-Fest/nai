@@ -26,7 +26,7 @@ Existing raw-only `.npz` datasets can still train direct IMU representations, bu
 
 ## Build / test status
 
-Sources updated and JavaScript syntax + synthetic feature tests passed. **PlatformIO compilation and hardware tests were not run here** because the required target platform and local Noodle library checkout are unavailable in this environment. Before deployment, compile and upload the new firmware and verify BLE 208-byte notifications and agreement of training/inference features. The web installer currently references a **legacy factory `.bin`**, which does not implement the new protocol; rebuild and republish that binary separately.
+This port reuses the continuous-Madgwick source; the generic ESP32 + MPU6050 build still requires physical validation. **PlatformIO compilation and hardware tests were not run here** because the target toolchain and local Noodle checkout are unavailable in this environment. Before deployment, compile and upload the new firmware and verify BLE 208-byte notifications and agreement of training/inference features. The web installer currently references a **legacy factory `.bin`**, which does not implement the new protocol; rebuild and republish that binary separately.
 
 For gyroscope bias calibration, keep the board stationary during initial boot. Absolute tilt is gravity-referenced, but yaw is not observable from a six-axis IMU and remains relative/drift-prone. Accelerometer-based tilt may be disturbed by large linear accelerations.
 

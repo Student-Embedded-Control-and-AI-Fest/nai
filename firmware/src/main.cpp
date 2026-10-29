@@ -3,11 +3,17 @@
 #include <math.h>
 #include <Wire.h>
 #include <FFat.h>
+#if defined(NAI_BOARD_ESP32_MPU6050)
+#include "nai_mpu6050.h"
+#else
 #include <SensorQMI8658.hpp>
+#endif
 #include "nai_gyro_calibration.h"
 #include "nai_motion_lpf5.h"
 #include "nai_motion_gyro_hpf05.h"
+#if !defined(NAI_BOARD_ESP32_MPU6050)
 #include <Adafruit_NeoPixel.h>
+#endif
 
 #include <BLEDevice.h>
 #include <BLEServer.h>
@@ -19,12 +25,31 @@
 #include "NoodleAIModel.h"
 
 // -----------------------------------------------------------------------------
-// Waveshare ESP32-S3-Matrix hardware
+// ESP32-S3-Matrix or generic ESP32 + MPU6050 hardware
 // -----------------------------------------------------------------------------
+#if defined(NAI_BOARD_ESP32_MPU6050)
+#ifndef NAI_IMU_SDA_PIN
+#define NAI_IMU_SDA_PIN 21
+#endif
+#ifndef NAI_IMU_SCL_PIN
+#define NAI_IMU_SCL_PIN 22
+#endif
+#ifndef NAI_GESTURE_BUTTON_PIN
+#define NAI_GESTURE_BUTTON_PIN 0
+#endif
+#ifndef NAI_STATUS_LED_PIN
+#define NAI_STATUS_LED_PIN 2
+#endif
+static constexpr int PIN_IMU_SDA = NAI_IMU_SDA_PIN;
+static constexpr int PIN_IMU_SCL = NAI_IMU_SCL_PIN;
+static constexpr int PIN_BOOT = NAI_GESTURE_BUTTON_PIN;
+static constexpr int PIN_STATUS_LED = NAI_STATUS_LED_PIN;
+#else
 static constexpr int PIN_IMU_SDA = 11;
 static constexpr int PIN_IMU_SCL = 12;
 static constexpr int PIN_MATRIX = 14;
 static constexpr int PIN_BOOT = 0;
+#endif
 static constexpr uint32_t BOOT_TRAIN_WINDOW_MS = 1200;
 static constexpr uint32_t BOOT_DEBOUNCE_MS = 60;
 static constexpr uint32_t RUNTIME_BOOT_DEBOUNCE_MS = 30;
@@ -47,7 +72,7 @@ static constexpr float GRAVITY_MPS2 = 9.80665f;
 // -----------------------------------------------------------------------------
 static const char *DEVICE_NAME = "NoodleAI";
 static const char *SERVICE_UUID = "7f8b0001-5f5b-4f4a-a5d5-2e889aa10001";
-static const char *IMU_UUID     = "7f8b0002-5f5b-4f4a-a5d5-2e889aa10001"; // notify: <IB3x30f (1..5 six-axis samples)
+static const char *IMU_UUID     = "7f8b0002-5f5b-4f4a-a5d5-2e889aa10001"; // notify: <IB3x50f (1..5 ten-float samples)
 static const char *CONTROL_UUID = "7f8b0003-5f5b-4f4a-a5d5-2e889aa10001"; // write
 static const char *MODEL_UUID   = "7f8b0004-5f5b-4f4a-a5d5-2e889aa10001"; // file bytes
 static const char *STATUS_UUID  = "7f8b0005-5f5b-4f4a-a5d5-2e889aa10001"; // notify/read ASCII
@@ -89,7 +114,11 @@ struct ImuPacket {
 
 static_assert(sizeof(ImuPacket) == 208, "ImuPacket must remain exactly 208 bytes");
 
+#if defined(NAI_BOARD_ESP32_MPU6050)
+NaiMpu6050 mpu;
+#else
 SensorQMI8658 qmi;
+#endif
 
 // These values and the stationarity thresholds intentionally match Mode 2.
 // Acceleration is in g; gyroscope readings are in degrees/second.
@@ -98,7 +127,9 @@ static constexpr uint16_t GYRO_CAL_SAMPLES = 300;
 static constexpr uint16_t GYRO_CAL_DELAY_MS = 10;
 static float s_gyro_bias_dps[3] = {0.0f, 0.0f, 0.0f};
 static bool s_gyro_calibrated = false;
+#if !defined(NAI_BOARD_ESP32_MPU6050)
 Adafruit_NeoPixel pixels(64, PIN_MATRIX, NEO_GRB + NEO_KHZ800);
+#endif
 NoodleAIModel model;
 
 BLEServer *bleServer = nullptr;
@@ -156,6 +187,14 @@ struct DeployState {
 // -----------------------------------------------------------------------------
 // Small 5x7 status glyphs on the onboard 8x8 matrix
 // -----------------------------------------------------------------------------
+#if defined(NAI_BOARD_ESP32_MPU6050)
+// Generic DevKit has no 8x8 matrix. Status remains available over BLE and
+// Serial; onboard LED is optional and board-dependent.
+static void showGlyph(char c) {
+    Serial.printf("STATUS:%c\n", c);
+    if (PIN_STATUS_LED >= 0) digitalWrite(PIN_STATUS_LED, c == 'R' ? HIGH : LOW);
+}
+#else
 static uint16_t xyToIndex(uint8_t x, uint8_t y) {
     return (x % 2 == 0) ? (x * 8 + y) : (x * 8 + (7 - y));
 }
@@ -192,6 +231,8 @@ static void showGlyph(char c) {
     else if (c == 'R') drawRows(glyphs[12], color);
     else drawRows(glyphs[11], color);
 }
+
+#endif
 
 // GPIO0 is the ESP32-S3 BOOT strapping pin. Holding it while resetting can
 // enter the ROM downloader, so NoodleAI samples it only AFTER the application
@@ -462,11 +503,7 @@ class ServerCallbacks : public BLEServerCallbacks {
         bleConnected = true;
         const char *s = model.loaded() ? "CONNECTED:M" : "CONNECTED:N";
         Serial.println(s);
-#if defined(NOODLE_USE_INT8)
         if (statusCharacteristic) statusCharacteristic->setValue("NAI_PRECISION:INT8");
-#else
-        if (statusCharacteristic) statusCharacteristic->setValue("NAI_PRECISION:FP32");
-#endif
     }
     void onDisconnect(BLEServer *server) override {
         bleConnected = false;
@@ -563,8 +600,12 @@ class ModelCallbacks : public BLECharacteristicCallbacks {
 // NaiGyroCalAccumulator; do not apply an already-measured bias here.
 static bool readRawImu(float s[6]) {
     if (!s) return false;
+#if defined(NAI_BOARD_ESP32_MPU6050)
+    return mpu.read(s);
+#else
     if (!qmi.getAccelerometer(s[0], s[1], s[2])) return false;
     return qmi.getGyroscope(s[3], s[4], s[5]);
+#endif
 }
 
 // Keep the board motionless during initialization (~3.5 seconds).
@@ -600,6 +641,10 @@ static bool initImu() {
     Wire.setClock(400000);
     delay(20);
 
+#if defined(NAI_BOARD_ESP32_MPU6050)
+    if (!mpu.begin(Wire)) return false;
+    Serial.printf("MPU6050 found at 0x%02X; +/-4g, +/-1000dps, ODR=100Hz\n", mpu.address());
+#else
     bool ok = qmi.begin(Wire, QMI8658_L_SLAVE_ADDRESS);
     if (!ok) ok = qmi.begin(Wire, QMI8658_H_SLAVE_ADDRESS);
     if (!ok) return false;
@@ -616,6 +661,7 @@ static bool initImu() {
     if (!qmi.enableAccelerometer()) return false;
     if (!qmi.enableGyroscope()) return false;
     delay(100); // QMI8658 output settling, as in Mode 2
+#endif
     return calibrateGyroZeroRate();
 }
 
@@ -643,11 +689,7 @@ static void initBle() {
     statusCharacteristic = service->createCharacteristic(
         STATUS_UUID, BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
     statusCharacteristic->addDescriptor(new BLE2902());
-#if defined(NOODLE_USE_INT8)
     statusCharacteristic->setValue("NAI_PRECISION:INT8");
-#else
-    statusCharacteristic->setValue("NAI_PRECISION:FP32");
-#endif
 
     service->start();
     BLEAdvertising *advertising = BLEDevice::getAdvertising();
@@ -1182,12 +1224,7 @@ static void runGestureInference(uint16_t rawSamples, uint32_t durationMs) {
 #if defined(NAI_BENCH_FCN) && NAI_BENCH_FCN
     // Printing is deliberately outside inferStartUs..inferUs so that the
     // PRED inference time excludes diagnostic serial output overhead.
-    Serial.printf("NAI_FCN backend=%s fcn_us=%lu\n",
-#if defined(SRAM_BACKEND) && SRAM_BACKEND
-                  "SRAM",
-#else
-                  "FFAT",
-#endif
+    Serial.printf("NAI_FCN backend=FFAT fcn_us=%lu\n",
                   static_cast<unsigned long>(model.lastFcnUs()));
 #endif
     const String &name = model.label(cls);
@@ -1329,12 +1366,16 @@ static void processImuSample(float ax, float ay, float az,
 void setup() {
     Serial.begin(115200);
     delay(400);
-    Serial.println("\nNoodleAI ESP32-S3-Matrix — NAI4 motion representations + restored live BLE");
-
+#if defined(NAI_BOARD_ESP32_MPU6050)
+    Serial.println("\nNoodleAI generic ESP32 + MPU6050 - INT8 / NAI4");
+    if (PIN_STATUS_LED >= 0) { pinMode(PIN_STATUS_LED, OUTPUT); digitalWrite(PIN_STATUS_LED, LOW); }
+#else
+    Serial.println("\nNoodleAI ESP32-S3-Matrix - INT8 / NAI4");
     pixels.begin();
     pixels.setBrightness(24);
     pixels.clear();
     pixels.show();
+#endif
 
     // Physical startup mode selection. Do not hold BOOT during reset/power-on;
     // press it after the NoodleAI application starts and while '?' is displayed.
@@ -1352,11 +1393,19 @@ void setup() {
                   (unsigned)FFat.totalBytes(), (unsigned)FFat.usedBytes());
 
     if (!initImu()) {
+#if defined(NAI_BOARD_ESP32_MPU6050)
+        Serial.println("MPU6050 init failed; verify 3V3, SDA, SCL, and GND");
+#else
         Serial.println("QMI8658 init failed");
+#endif
         showGlyph('?');
         while (true) delay(1000);
     }
+#if defined(NAI_BOARD_ESP32_MPU6050)
+    Serial.println("MPU6050 accelerometer + gyroscope OK");
+#else
     Serial.println("QMI8658 accelerometer + gyroscope OK");
+#endif
     Serial.printf("GYRO_CAL:%s\n", s_gyro_calibrated ? "OK" : "UNSTABLE");
     Serial.printf("GBc:%ld,%ld,%ld\n",
                   lroundf(s_gyro_bias_dps[0] * 100.0f),
@@ -1413,11 +1462,10 @@ void loop() {
 
     if (now - lastSampleMs >= periodMs) {
         lastSampleMs += periodMs;
-        float ax = 0.0f, ay = 0.0f, az = 0.0f;
-        float gx = 0.0f, gy = 0.0f, gz = 0.0f;
-        const bool accOk = qmi.getAccelerometer(ax, ay, az);
-        const bool gyrOk = qmi.getGyroscope(gx, gy, gz);
-        if (accOk && gyrOk) {
+        float sample[6]{};
+        if (readRawImu(sample)) {
+            float &ax = sample[0], &ay = sample[1], &az = sample[2];
+            float &gx = sample[3], &gy = sample[4], &gz = sample[5];
             // Correct before BOTH BLE training acquisition and inference.
             // This includes the gyro inputs used for Madgwick orientation.
             if (s_gyro_calibrated) {
